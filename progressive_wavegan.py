@@ -55,7 +55,7 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def to_audio(inputs, out_nch):
+def to_audio(inputs, out_nch, kernel_len=25):
   '''
   Converts feature map into an audio clip.
   '''
@@ -68,12 +68,12 @@ def to_audio(inputs, out_nch):
     if in_feature_maps == out_nch:
       output = inputs
     else:
-      output = tf.layers.conv1d(inputs, filters=out_nch, kernel_size=1, strides=1, padding='same')
+      output = tf.layers.conv1d(inputs, filters=out_nch, kernel_size=kernel_len, strides=1, padding='same')
     output = tf.nn.tanh(output)
     return output
 
 
-def from_audio(inputs, out_feature_maps):
+def from_audio(inputs, out_feature_maps, stride=4, kernel_len=25):
   '''
   Converts an input audio clip into a feature maps.
   '''
@@ -82,15 +82,17 @@ def from_audio(inputs, out_feature_maps):
     assert(in_nch == 1 or in_nch == 2)
 
     # TODO: Add normalization
+    # TODO: Make phaseshuffle radius adjustable via settings
     if in_nch == out_feature_maps:
       output = inputs
     else:
-      output = tf.layers.conv1d(inputs, filters=out_feature_maps, kernel_size=1, strides=1, padding='same')
-    output = lrelu(output)
+      output = tf.layers.conv1d(inputs, filters=out_feature_maps, kernel_size=kernel_len, strides=stride, padding='same')
+      output = lrelu(output)
+      output = apply_phaseshuffle(output, 2)
     return output
 
 
-def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsample='zeros'):
+def up_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, upsample='zeros'):
   '''
   Up Block
   '''
@@ -114,7 +116,7 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
       code = conv_layers()
     
       # Blend this LOD block in over time
-      out_audio_lod = to_audio(code, nch)
+      out_audio_lod = to_audio(code, nch, kernel_len)
       out_audio_lod = lerp_clip(nn_upsample(audio_lod, stride), out_audio_lod, on_amount)
 
       return code, out_audio_lod
@@ -122,7 +124,7 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
   def fully_on():
     with tf.variable_scope('fully_on'):
       code = conv_layers()
-      out_audio_lod = to_audio(code, nch)
+      out_audio_lod = to_audio(code, nch, kernel_len)
       return code, out_audio_lod
 
   def next_layer_fully_on():
@@ -148,7 +150,7 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
   return code, out_audio_lod
 
 
-def down_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4):
+def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
   '''
   Down Block
   '''
@@ -174,13 +176,13 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4):
   def skip():
     with tf.variable_scope('skip'):
       out_audio_lod = avg_downsample(audio_lod, stride)
-      return from_audio(out_audio_lod, filters), out_audio_lod
+      return from_audio(audio_lod, filters, stride, kernel_len), out_audio_lod
 
   def transition():
     with tf.variable_scope('transition'):
       out_audio_lod = avg_downsample(audio_lod, stride)
       code = conv_layers()
-      code = lerp_clip(from_audio(out_audio_lod, filters), code, on_amount)
+      code = lerp_clip(from_audio(audio_lod, filters, stride, kernel_len), code, on_amount)
 
       return code, out_audio_lod
 
@@ -248,7 +250,7 @@ def PWaveGANGenerator(
 
   # Audio Summary
   # TODO: Allow using custom sample rate (not just hard coded to 16KHz)
-  audio_lod = to_audio(output, nch)
+  audio_lod = to_audio(output, nch, kernel_len)
   if slice_len == 16384:
     max_lod  = 5 # Use less upsamples for producing summaries when we have less upsample layers
   else:
