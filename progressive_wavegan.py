@@ -102,8 +102,8 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, ups
     # TODO: Add normalization
     code = inputs
     code = conv1d_transpose(code, filters, kernel_len, stride=stride, upsample=upsample)
-    code = tf.nn.relu(code)
-    code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
+    # code = tf.nn.relu(code)
+    # code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
     return code
 
   def skip():
@@ -159,9 +159,9 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
     # TODO: Add normalization
     # TODO: Make phase shuffle adjustable
     code = inputs
-    code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
-    code = lrelu(code)
-    code = apply_phaseshuffle(code, 2)
+    # code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
+    # code = lrelu(code)
+    # code = apply_phaseshuffle(code, 2)
     code = tf.layers.conv1d(code, filters, kernel_len, strides=stride, padding='SAME')
     return code
 
