@@ -277,7 +277,7 @@ def PWaveGANGenerator(
     max_lod  = 5 # Use less upsamples for producing summaries when we have less upsample layers
   else:
     max_lod  = 6
-  tf.summary.audio('G_audio', n_nn_upsamples(audio_lod, max_lod ), 16000, max_outputs=10, family='G_audio_lod_0')
+  tf.summary.audio('G_audio', n_nn_upsamples(audio_lod, max_lod), 16000, max_outputs=10, family='G_audio_lod_0')
 
   # Layer 0
   # [16, 1024] -> [64, 512]
@@ -335,7 +335,8 @@ def PWaveGANGenerator(
     # [4096, 64] -> [16384, nch]
     with tf.variable_scope('upconv_4'):
       on_amount = lod - 4  # on at LOD 5
-      _, output = up_block(output, audio_lod, on_amount, nch, kernel_len, 4, upsample=upsample) # Audio LOD is main output for final layer
+      _, audio_lod = up_block(output, audio_lod, on_amount, nch, kernel_len, 4, upsample=upsample)
+      output = audio_lod # Audio LOD is main output for final layer
 
       # Summary for LOD level
       tf.summary.scalar('on_amount', on_amount)
@@ -358,7 +359,8 @@ def PWaveGANGenerator(
     # [16384, 64] -> [32768, nch]
     with tf.variable_scope('upconv_5'):
       on_amount = lod - 5  # on at LOD 6
-      _, output = up_block(output, audio_lod, on_amount, nch, kernel_len, 2, upsample=upsample) # Audio LOD is main output for final layer
+      _, audio_lod = up_block(output, audio_lod, on_amount, nch, kernel_len, 2, upsample=upsample)
+      output = audio_lod # Audio LOD is main output for final layer
 
       # Summary for LOD level
       tf.summary.scalar('on_amount', on_amount)
@@ -381,7 +383,8 @@ def PWaveGANGenerator(
     # [16384, 64] -> [65536, nch]
     with tf.variable_scope('upconv_5'):
       on_amount = lod - 5  # on at LOD 6
-      _, output = up_block(output, audio_lod, on_amount, nch, kernel_len, 4, upsample=upsample) # Audio LOD is main output for final layer
+      _, audio_lod = up_block(output, audio_lod, on_amount, nch, kernel_len, 4, upsample=upsample)
+      output = audio_lod # Audio LOD is main output for final layer
 
       # Summary for LOD level
       tf.summary.scalar('on_amount', on_amount)
