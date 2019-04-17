@@ -284,7 +284,10 @@ def train(fps, args):
             sess.run(D_clip_weights)
 
       # Train generator
-      sess.run(G_train_op, feed_dict={lod: cur_lod})
+      if args.use_progressive_growing:
+        sess.run(G_train_op, feed_dict={lod: cur_lod})
+      else:
+        sess.run(G_train_op)
 
 
 """
@@ -704,7 +707,7 @@ if __name__ == '__main__':
     incept_ckpt_fp='./eval/inception/best_acc-103005',
     incept_n=5000,
     incept_k=10,
-    use_progressive_growing=True)
+    use_progressive_growing=False)
 
   args = parser.parse_args()
 

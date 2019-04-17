@@ -111,9 +111,9 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
   def conv_layers():
     # TODO: Add normalization
     code = inputs
-    code = conv1d_transpose(code, filters * 2, kernel_len, stride // 2, upsample=upsample)
-    code = lrelu(code)
-    code = conv1d_transpose(code, filters, kernel_len, stride // 2, upsample=upsample)
+    code = conv1d_transpose(code, filters, kernel_len, stride=stride, upsample=upsample)
+    code = tf.nn.relu(code)
+    code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
     return code
 
   def skip():
@@ -168,36 +168,35 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4):
   '''
   Down Block
   '''
-  out_filters = filters * 2
   def conv_layers():
     # Blend this LOD block in over time
     # TODO: Add normalization
     # TODO: Make phase shuffle adjustable
     code = inputs
-    code = tf.layers.conv1d(code, filters, kernel_len, stride // 2, padding='SAME')
+    code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
     code = lrelu(code)
     code = apply_phaseshuffle(code, 2)
-    code = tf.layers.conv1d(code, out_filters, kernel_len, stride // 2, padding='SAME')
+    code = tf.layers.conv1d(code, filters, kernel_len, strides=stride, padding='SAME')
     return code
 
   def next_layer_fully_off():
     with tf.variable_scope('next_layer_fully_off'):
       # Since the next layer is fully off, it will only need the output audio lod
       # from this layer. There is no need to calculate any kind of output code here.
-      code = tf.zeros([inputs.shape[0], inputs.shape[1] // stride, out_filters], dtype=tf.float32)
+      code = tf.zeros([inputs.shape[0], inputs.shape[1] // stride, filters], dtype=tf.float32)
       out_audio_lod = avg_downsample(audio_lod, stride)
       return code, out_audio_lod
 
   def skip():
     with tf.variable_scope('skip'):
       out_audio_lod = avg_downsample(audio_lod, stride)
-      return from_audio(out_audio_lod, out_filters), out_audio_lod
+      return from_audio(out_audio_lod, filters), out_audio_lod
 
   def transition():
     with tf.variable_scope('transition'):
       out_audio_lod = avg_downsample(audio_lod, stride)
       code = conv_layers()
-      code = lerp_clip(from_audio(out_audio_lod, out_filters), code, on_amount)
+      code = lerp_clip(from_audio(out_audio_lod, filters), code, on_amount)
 
       return code, out_audio_lod
 
@@ -216,7 +215,7 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4):
                 lambda: tf.cond(on_amount <   1.0, transition,
                         fully_on)))
 
-  code.set_shape([inputs.shape[0], inputs.shape[1] // stride, out_filters])
+  code.set_shape([inputs.shape[0], inputs.shape[1] // stride, filters])
   out_audio_lod.set_shape([audio_lod.shape[0], audio_lod.shape[1] // stride, audio_lod.shape[2]])
   assert(audio_lod.shape[2] == 1 or audio_lod.shape[2] == 2)
 
@@ -262,10 +261,6 @@ def PWaveGANGenerator(
     output = batchnorm(output)
     output = tf.nn.relu(output)
   dim_mul //= 2
-  # We are reducing the dimensions of this model to allow for a 2 stage convolution in 
-  # the up / down blocks. This should help the model to create more complex
-  # non-linear mappings for each LOD level.
-  dim = int(dim // 2.5)
 
   # Audio Summary
   # TODO: Allow using custom sample rate (not just hard coded to 16KHz)
@@ -451,11 +446,6 @@ def PWaveGANDiscriminator(
   # Summary for LOD level
   if 'D_x/' in tf.get_default_graph().get_name_scope():
     tf.summary.audio('input_audio', x, 16000, max_outputs=10, family='D_audio_lod_{}'.format(max_lod))
-
-  # We are reducing the dimensions of this model to allow for a 2 stage convolution in 
-  # the up / down blocks. This should help the model to create more complex
-  # non-linear mappings for each LOD level.
-  dim = int(dim // 2.5)
 
   # Layer 0
   # [16384, 1] -> [4096, 64]
