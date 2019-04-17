@@ -61,7 +61,7 @@ def to_audio(inputs, out_nch):
   '''
   assert(out_nch == 1 or out_nch == 2)
 
-  with tf.variable_scope('to_audio'):
+  with tf.variable_scope('to_audio', reuse=tf.AUTO_REUSE):
     in_feature_maps = inputs.shape[2]
 
     # TODO: Add normalization
@@ -77,7 +77,7 @@ def from_audio(inputs, out_feature_maps):
   '''
   Converts an input audio clip into a feature maps.
   '''
-  with tf.variable_scope('from_audio'):
+  with tf.variable_scope('from_audio', reuse=tf.AUTO_REUSE):
     in_nch = inputs.shape[2]
     assert(in_nch == 1 or in_nch == 2)
 
@@ -99,44 +99,41 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, ups
   nch = audio_lod.shape[2]
 
   def conv_layers():
-    # TODO: Add normalization
-    code = inputs
-    code = conv1d_transpose(code, filters, kernel_len, stride=stride, upsample=upsample)
-    # code = tf.nn.relu(code)
-    # code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
-    return code
+    with tf.variable_scope('conv_layers', reuse=tf.AUTO_REUSE):
+      # TODO: Add normalization
+      code = inputs
+      code = conv1d_transpose(code, filters, kernel_len, stride=stride, upsample=upsample)
+      # code = tf.nn.relu(code)
+      # code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
+      return code
 
   def skip():
-    with tf.variable_scope('skip'):
-      skip_connection_code = tf.zeros([tf.shape(inputs)[0], tf.shape(inputs)[1] * stride, filters], dtype=tf.float32)
-      return skip_connection_code, nn_upsample(audio_lod, stride)
+    skip_connection_code = tf.zeros([tf.shape(inputs)[0], tf.shape(inputs)[1] * stride, filters], dtype=tf.float32)
+    return skip_connection_code, nn_upsample(audio_lod, stride)
 
   def transition():
-    with tf.variable_scope('transition'):
-      code = conv_layers()
-    
-      # Blend this LOD block in over time
-      out_audio_lod = to_audio(code, nch)
-      out_audio_lod = lerp_clip(nn_upsample(audio_lod, stride), out_audio_lod, on_amount)
+    code = conv_layers()
+  
+    # Blend this LOD block in over time
+    out_audio_lod = to_audio(code, nch)
+    out_audio_lod = lerp_clip(nn_upsample(audio_lod, stride), out_audio_lod, on_amount)
 
-      return code, out_audio_lod
+    return code, out_audio_lod
 
   def fully_on():
-    with tf.variable_scope('fully_on'):
-      code = conv_layers()
-      out_audio_lod = to_audio(code, nch)
-      return code, out_audio_lod
+    code = conv_layers()
+    out_audio_lod = to_audio(code, nch)
+    return code, out_audio_lod
 
   def next_layer_fully_on():
-    with tf.variable_scope('next_layer_fully_on'):
-      code = conv_layers()
-      
-      # When the next layer is fully on we don't need to calculate an input audio lod for it
-      # anymore, since it will only be using the 'code' output of this layer to calculate its
-      # audio and code outputs.
-      out_audio_lod = tf.zeros([tf.shape(audio_lod)[0], tf.shape(audio_lod)[1] * stride, tf.shape(audio_lod)[2]], dtype=tf.float32)
+    code = conv_layers()
+    
+    # When the next layer is fully on we don't need to calculate an input audio lod for it
+    # anymore, since it will only be using the 'code' output of this layer to calculate its
+    # audio and code outputs.
+    out_audio_lod = tf.zeros([tf.shape(audio_lod)[0], tf.shape(audio_lod)[1] * stride, tf.shape(audio_lod)[2]], dtype=tf.float32)
 
-      return code, out_audio_lod
+    return code, out_audio_lod
 
   code, out_audio_lod = tf.cond(on_amount <= 0.0, skip,
                 lambda: tf.cond(on_amount <  1.0, transition,
@@ -155,46 +152,43 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
   Down Block
   '''
   def conv_layers():
-    # Blend this LOD block in over time
-    # TODO: Add normalization
-    # TODO: Make phase shuffle adjustable
-    code = inputs
-    # code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
-    # code = lrelu(code)
-    # code = apply_phaseshuffle(code, 2)
-    code = tf.layers.conv1d(code, filters, kernel_len, strides=stride, padding='SAME')
-    return code
+    with tf.variable_scope('conv_layers', reuse=tf.AUTO_REUSE):
+      # Blend this LOD block in over time
+      # TODO: Add normalization
+      # TODO: Make phase shuffle adjustable
+      code = inputs
+      # code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
+      # code = lrelu(code)
+      # code = apply_phaseshuffle(code, 2)
+      code = tf.layers.conv1d(code, filters, kernel_len, strides=stride, padding='SAME')
+      return code
 
   def next_layer_fully_off():
-    with tf.variable_scope('next_layer_fully_off'):
-      # Since the next layer is fully off, it will only need the output audio lod
-      # from this layer. There is no need to calculate any kind of output code here.
-      code = tf.zeros([inputs.shape[0], inputs.shape[1] // stride, filters], dtype=tf.float32)
-      out_audio_lod = avg_downsample(audio_lod, stride)
-      return code, out_audio_lod
+    # Since the next layer is fully off, it will only need the output audio lod
+    # from this layer. There is no need to calculate any kind of output code here.
+    code = tf.zeros([inputs.shape[0], inputs.shape[1] // stride, filters], dtype=tf.float32)
+    out_audio_lod = avg_downsample(audio_lod, stride)
+    return code, out_audio_lod
 
   def skip():
-    with tf.variable_scope('skip'):
-      out_audio_lod = avg_downsample(audio_lod, stride)
-      return from_audio(out_audio_lod, filters), out_audio_lod
+    out_audio_lod = avg_downsample(audio_lod, stride)
+    return from_audio(out_audio_lod, filters), out_audio_lod
 
   def transition():
-    with tf.variable_scope('transition'):
-      out_audio_lod = avg_downsample(audio_lod, stride)
-      code = conv_layers()
-      code = lerp_clip(from_audio(out_audio_lod, filters), code, on_amount)
+    out_audio_lod = avg_downsample(audio_lod, stride)
+    code = conv_layers()
+    code = lerp_clip(from_audio(out_audio_lod, filters), code, on_amount)
 
-      return code, out_audio_lod
+    return code, out_audio_lod
 
   def fully_on():
-    with tf.variable_scope('fully_on'):
-      # When this layer is fully on we don't need to calculate the downsampled audio lod and
-      # convert it to a code to blend between anymore. We can simply output the calculated
-      # output code from the this block inputs. The next downsample block is also garanteed 
-      # to be fully on, so it will also only need code output from this block.
-      out_audio_lod = tf.zeros([audio_lod.shape[0], audio_lod.shape[1] // stride, audio_lod.shape[2]], dtype=tf.float32)
-      code = conv_layers() 
-      return code, out_audio_lod
+    # When this layer is fully on we don't need to calculate the downsampled audio lod and
+    # convert it to a code to blend between anymore. We can simply output the calculated
+    # output code from the this block inputs. The next downsample block is also garanteed 
+    # to be fully on, so it will also only need code output from this block.
+    out_audio_lod = tf.zeros([audio_lod.shape[0], audio_lod.shape[1] // stride, audio_lod.shape[2]], dtype=tf.float32)
+    code = conv_layers() 
+    return code, out_audio_lod
     
   code, out_audio_lod = tf.cond(on_amount <= -1.0, next_layer_fully_off,
                 lambda: tf.cond(on_amount <=  0.0, skip,
