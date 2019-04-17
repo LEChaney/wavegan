@@ -55,25 +55,20 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def to_audio(inputs, nch):
+def to_audio(inputs, out_nch):
   '''
   Converts feature map into an audio clip.
   '''
-  assert(nch == 1 or nch ==2)
+  assert(out_nch == 1 or out_nch == 2)
 
   with tf.variable_scope('to_audio'):
-    def transform_input():
-      return tf.layers.conv1d(inputs, filters=nch, kernel_size=1, strides=1, padding='same')
-    
-    def output_input():
-      return inputs
-
     in_feature_maps = inputs.shape[2]
-    output = tf.cond(tf.not_equal(in_feature_maps, nch), transform_input, output_input)
-    output.set_shape([inputs.shape[0], inputs.shape[1], nch])
 
     # TODO: Add normalization
-    output = tf.layers.conv1d(inputs, filters=nch, kernel_size=1, strides=1, padding='same')
+    if in_feature_maps == out_nch:
+      output = inputs
+    else:
+      output = tf.layers.conv1d(inputs, filters=out_nch, kernel_size=1, strides=1, padding='same')
     output = tf.nn.tanh(output)
     return output
 
@@ -83,23 +78,14 @@ def from_audio(inputs, out_feature_maps):
   Converts an input audio clip into a feature maps.
   '''
   with tf.variable_scope('from_audio'):
-    # def transform_input():
-    #   output = tf.layers.conv1d(inputs, filters=out_feature_maps, kernel_size=1, strides=1, padding='same')
-    #   # TODO: Add normalization
-    #   output = lrelu(output)
-    #   return output
-    
-    # def output_input():
-    #   return inputs
-
-    # in_nch = inputs.shape[2]
-    # assert(in_nch == 1 or in_nch == 2)
-
-    # output = tf.cond(tf.not_equal(in_nch, out_feature_maps), transform_input, output_input)
-    # output.set_shape([inputs.shape[0], inputs.shape[1], out_feature_maps])
+    in_nch = inputs.shape[2]
+    assert(in_nch == 1 or in_nch == 2)
 
     # TODO: Add normalization
-    output = tf.layers.conv1d(inputs, filters=out_feature_maps, kernel_size=1, strides=1, padding='same')
+    if in_nch == out_feature_maps:
+      output = inputs
+    else:
+      output = tf.layers.conv1d(inputs, filters=out_feature_maps, kernel_size=1, strides=1, padding='same')
     output = lrelu(output)
     return output
 
@@ -108,12 +94,14 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
   '''
   Up Block
   '''
+  nch = audio_lod.shape[2]
+
   def conv_layers():
     # TODO: Add normalization
     code = inputs
     code = conv1d_transpose(code, filters, kernel_len, stride=stride, upsample=upsample)
-    code = tf.nn.relu(code)
-    code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
+    # code = tf.nn.relu(code)
+    # code = tf.layers.conv1d(code, filters, kernel_len, strides=1, padding='SAME')
     return code
 
   def skip():
@@ -126,7 +114,6 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
       code = conv_layers()
     
       # Blend this LOD block in over time
-      nch = audio_lod.shape[2]
       out_audio_lod = to_audio(code, nch)
       out_audio_lod = lerp_clip(nn_upsample(audio_lod, stride), out_audio_lod, on_amount)
 
@@ -135,10 +122,7 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4, upsa
   def fully_on():
     with tf.variable_scope('fully_on'):
       code = conv_layers()
-
-      nch = audio_lod.shape[2]
       out_audio_lod = to_audio(code, nch)
-
       return code, out_audio_lod
 
   def next_layer_fully_on():
@@ -173,9 +157,9 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=9, stride=4):
     # TODO: Add normalization
     # TODO: Make phase shuffle adjustable
     code = inputs
-    code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
-    code = lrelu(code)
-    code = apply_phaseshuffle(code, 2)
+    # code = tf.layers.conv1d(code, code.shape[2], kernel_len, strides=1, padding='SAME')
+    # code = lrelu(code)
+    # code = apply_phaseshuffle(code, 2)
     code = tf.layers.conv1d(code, filters, kernel_len, strides=stride, padding='SAME')
     return code
 

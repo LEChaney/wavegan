@@ -227,7 +227,7 @@ def train(fps, args):
 
   def get_lod_at_step(step):
     return 6
-    lod_progress = step / 2000
+    # lod_progress = step / 2000
     # return np.piecewise(lod_progress,
     #                     [     lod_progress < 1, 1 <= lod_progress < 2,
     #                      2 <= lod_progress < 3, 3 <= lod_progress < 4,
