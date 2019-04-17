@@ -3,5 +3,8 @@
 *.ipynb_checkpoints
 *.wav
 *.tar.gz
-train
+.vscode/
+train/
+train_*/
 web/ckpts
+data/

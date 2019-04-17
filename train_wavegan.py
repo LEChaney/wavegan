@@ -10,10 +10,12 @@ import time
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.training.summary_io import SummaryWriterCache
 from six.moves import xrange
 
 import loader
 from wavegan import WaveGANGenerator, WaveGANDiscriminator
+from progressive_wavegan import PWaveGANGenerator, PWaveGANDiscriminator
 
 
 """
@@ -42,9 +44,16 @@ def train(fps, args):
   # Make z vector
   z = tf.random_uniform([args.train_batch_size, args.wavegan_latent_dim], -1., 1., dtype=tf.float32)
 
+  # The current LOD level
+  if args.use_progressive_growing:
+    lod = tf.placeholder(tf.float32, shape=[])
+
   # Make generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, train=True, **args.wavegan_g_kwargs)
+    if args.use_progressive_growing:
+      G_z = PWaveGANGenerator(z, lod, train=True, **args.wavegan_g_kwargs)
+    else:
+      G_z = WaveGANGenerator(z, train=True, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -62,8 +71,8 @@ def train(fps, args):
   print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
 
   # Summarize
-  tf.summary.audio('x', x, args.data_sample_rate)
-  tf.summary.audio('G_z', G_z, args.data_sample_rate)
+  # tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
+  # tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
   G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
   x_rms = tf.sqrt(tf.reduce_mean(tf.square(x[:, :, 0]), axis=1))
   tf.summary.histogram('x_rms_batch', x_rms)
@@ -73,7 +82,10 @@ def train(fps, args):
 
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
-    D_x = WaveGANDiscriminator(x, **args.wavegan_d_kwargs)
+    if args.use_progressive_growing:
+      D_x = PWaveGANDiscriminator(x, lod, **args.wavegan_d_kwargs)
+    else:
+      D_x = WaveGANDiscriminator(x, **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -90,7 +102,10 @@ def train(fps, args):
 
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
-    D_G_z = WaveGANDiscriminator(G_z, **args.wavegan_d_kwargs)
+    if args.use_progressive_growing:
+      D_G_z = PWaveGANDiscriminator(G_z, lod, **args.wavegan_d_kwargs)
+    else:
+      D_G_z = WaveGANDiscriminator(G_z, **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
@@ -141,7 +156,10 @@ def train(fps, args):
     differences = G_z - x
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
-      D_interp = WaveGANDiscriminator(interpolates, **args.wavegan_d_kwargs)
+      if args.use_progressive_growing:
+        D_interp = PWaveGANDiscriminator(interpolates, lod, **args.wavegan_d_kwargs)
+      else:
+        D_interp = WaveGANDiscriminator(interpolates, **args.wavegan_d_kwargs)
 
     LAMBDA = 10
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -150,6 +168,16 @@ def train(fps, args):
     D_loss += LAMBDA * gradient_penalty
   else:
     raise NotImplementedError()
+
+  # Diversity Regularization
+  # audio_diff = G_z[:args.train_batch_size // 2] - G_z[args.train_batch_size // 2:]
+  # z_diff = z[:args.train_batch_size // 2] - z[args.train_batch_size // 2:]
+  # audio_diff_mag = tf.sqrt(tf.reduce_sum(tf.square(audio_diff), reduction_indices=[1, 2]))
+  # z_diff_mag = tf.sqrt(tf.reduce_sum(tf.square(z_diff), reduction_indices=[1]))
+  # diversity_score = tf.reduce_mean(audio_diff_mag / z_diff_mag)
+  # DIVERSITY_SCALE = 1
+  # G_loss -= DIVERSITY_SCALE * diversity_score
+  # tf.summary.scalar('diversity_score', diversity_score)
 
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
@@ -184,10 +212,30 @@ def train(fps, args):
   else:
     raise NotImplementedError()
 
+  # Optimizer internal state reset ops
+  if args.use_progressive_growing:
+    reset_G_opt_op = tf.variables_initializer(G_opt.variables())
+    reset_D_opt_op = tf.variables_initializer(D_opt.variables())
+
   # Create training ops
   G_train_op = G_opt.minimize(G_loss, var_list=G_vars,
       global_step=tf.train.get_or_create_global_step())
   D_train_op = D_opt.minimize(D_loss, var_list=D_vars)
+
+  def np_lerp_clip(t, a, b):
+    return a + (b - a) * np.clip(t, 0.0, 1.0)
+
+  def get_lod_at_step(step):
+    return 6
+    lod_progress = step / 2000
+    # return np.piecewise(lod_progress,
+    #                     [     lod_progress < 1, 1 <= lod_progress < 2,
+    #                      2 <= lod_progress < 3, 3 <= lod_progress < 4,
+    #                      4 <= lod_progress < 5, 5 <= lod_progress < 6],
+    #                     [3, lambda x: np_lerp_clip((x - 1), 3, 4),
+    #                      4, lambda x: np_lerp_clip((x - 3), 4, 5), 
+    #                      5, lambda x: np_lerp_clip((x - 5), 5, 6),
+    #                      6])
 
   # Run training
   with tf.train.MonitoredTrainingSession(
@@ -196,17 +244,47 @@ def train(fps, args):
       save_summaries_secs=args.train_summary_secs) as sess:
     print('-' * 80)
     print('Training has started. Please use \'tensorboard --logdir={}\' to monitor.'.format(args.train_dir))
+    
+    # Get the summary writer for writing extra summary statistics
+    summary_writer = SummaryWriterCache.get(args.train_dir)
+
+    if args.use_progressive_growing:
+      cur_lod = 0
+      max_lod = 5
     while True:
+      if args.use_progressive_growing:
+        # Calculate Maximum LOD to train
+        step = sess.run(tf.train.get_or_create_global_step(), feed_dict={lod: cur_lod})
+        cur_lod = get_lod_at_step(step)
+        prev_lod = get_lod_at_step(step - 1)
+
+        # Reset optimizer internal state when new layers are introduced
+        if cur_lod < max_lod + 0.000005 and (np.floor(cur_lod) != np.floor(prev_lod) or np.ceil(cur_lod) != np.ceil(prev_lod)):
+          print("Resetting optimizers' internal states at step {}".format(step))
+          sess.run([reset_G_opt_op, reset_D_opt_op], feed_dict={lod: cur_lod})
+
+        # Output current LOD to tensorboard
+        lod_summary = tf.Summary(value=[
+          tf.Summary.Value(tag="current_lod", simple_value=float(cur_lod))
+        ])
+        summary_writer.add_summary(lod_summary, step)
+
       # Train discriminator
       for i in xrange(args.wavegan_disc_nupdates):
-        sess.run(D_train_op)
+        if args.use_progressive_growing:
+          sess.run(D_train_op, feed_dict={lod: cur_lod})
+        else:
+          sess.run(D_train_op)
 
         # Enforce Lipschitz constraint for WGAN
         if D_clip_weights is not None:
-          sess.run(D_clip_weights)
+          if args.use_progressive_growing:
+            sess.run(D_clip_weights, feed_dict={lod: cur_lod})
+          else:
+            sess.run(D_clip_weights)
 
       # Train generator
-      sess.run(G_train_op)
+      sess.run(G_train_op, feed_dict={lod: cur_lod})
 
 
 """
@@ -248,9 +326,15 @@ def infer(args):
   z = tf.placeholder(tf.float32, [None, args.wavegan_latent_dim], name='z')
   flat_pad = tf.placeholder(tf.int32, [], name='flat_pad')
 
+  if args.use_progressive_growing:
+    lod = tf.placeholder(tf.float32, shape=[])
+
   # Execute generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, train=False, **args.wavegan_g_kwargs)
+    if args.use_progressive_growing:
+      G_z = PWaveGANGenerator(z, lod, train=False, **args.wavegan_g_kwargs)
+    else:
+      G_z = WaveGANGenerator(z, train=False, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -566,6 +650,8 @@ if __name__ == '__main__':
       help='Length of post-processing filter for DCGAN')
   wavegan_args.add_argument('--wavegan_disc_phaseshuffle', type=int,
       help='Radius of phase shuffle operation')
+  wavegan_args.add_argument('--use_progressive_growing', action='store_true', dest='use_progressive_growing',
+      help='Enable progressive growing of WaveGAN')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -617,7 +703,8 @@ if __name__ == '__main__':
     incept_metagraph_fp='./eval/inception/infer.meta',
     incept_ckpt_fp='./eval/inception/best_acc-103005',
     incept_n=5000,
-    incept_k=10)
+    incept_k=10,
+    use_progressive_growing=True)
 
   args = parser.parse_args()
 
@@ -646,7 +733,7 @@ if __name__ == '__main__':
   })
 
   if args.mode == 'train':
-    fps = glob.glob(os.path.join(args.data_dir, '*'))
+    fps = glob.glob(os.path.join(args.data_dir, '**/*.wav'), recursive=True) # TODO: Add back MP3 and other file format support
     if len(fps) == 0:
       raise Exception('Did not find any audio files in specified directory')
     print('Found {} audio files in specified directory'.format(len(fps)))
