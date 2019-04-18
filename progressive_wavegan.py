@@ -155,31 +155,29 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, ups
       return code, out_audio_lod
   
   def next_layer_transitioning():
-    with tf.control_dependencies([mode.assign(3)]):
-      # Avoid going past 'fully on' state if this is the last block
-      if nch == filters:
-        return fully_on()
+    # Avoid going past 'fully on' state if this is the last block
+    if nch == filters:
+      return fully_on()
 
-      else:
-        out_audio_lod = to_audio(inputs, nch, kernel_len=kernel_len, stride=stride)
-        code = conv_layers()
-        return code, out_audio_lod
+    with tf.control_dependencies([mode.assign(3)]):
+      out_audio_lod = to_audio(inputs, nch, kernel_len=kernel_len, stride=stride)
+      code = conv_layers()
+      return code, out_audio_lod
 
   def next_layer_fully_on():
+    # Avoid going past 'fully on' state if this is the last block
+    if nch == filters:
+      return fully_on()
+
     with tf.control_dependencies([mode.assign(4)]):
-       # Avoid going past 'fully on' state if this is the last block
-      if nch == filters:
-        return fully_on()
+      code = conv_layers()
+      
+      # When the next layer is fully on we don't need to calculate an input audio lod for it
+      # anymore, since it will only be using the 'code' output of this layer to calculate its
+      # audio and code outputs.
+      out_audio_lod = tf.zeros([tf.shape(audio_lod)[0], tf.shape(audio_lod)[1] * stride, tf.shape(audio_lod)[2]], dtype=tf.float32)
 
-      else:
-        code = conv_layers()
-        
-        # When the next layer is fully on we don't need to calculate an input audio lod for it
-        # anymore, since it will only be using the 'code' output of this layer to calculate its
-        # audio and code outputs.
-        out_audio_lod = tf.zeros([tf.shape(audio_lod)[0], tf.shape(audio_lod)[1] * stride, tf.shape(audio_lod)[2]], dtype=tf.float32)
-
-        return code, out_audio_lod
+      return code, out_audio_lod
 
   code, out_audio_lod = tf.case([(                               on_amount <= 0,  skip),
                                  (tf.logical_and(0 <  on_amount, on_amount <  1), transition),
@@ -194,7 +192,7 @@ def up_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, ups
   return code, out_audio_lod
 
 
-def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
+def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4, last_block=False):
   '''
   Down Block
   '''
@@ -214,6 +212,10 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
       return code
 
   def next_layer_fully_off():
+    # Ensure we don't skip code output if we are the final layer
+    if last_block:
+      return next_layer_fully_on()
+
     with tf.control_dependencies([mode.assign(0)]):
       # Since the next layer is fully off, it will only need the output audio lod
       # from this layer. There is no need to calculate any kind of output code here.
@@ -222,6 +224,10 @@ def down_block(inputs, audio_lod, on_amount, filters, kernel_len=25, stride=4):
       return code, out_audio_lod
 
   def next_layer_transitioning():
+    # Ensure we skip audio output if we are the final layer
+    if last_block:
+      return next_layer_fully_on()
+
     with tf.control_dependencies([mode.assign(1)]):
       code = from_audio(audio_lod, filters, kernel_len, stride)
       out_audio_lod = avg_downsample(audio_lod, stride)
@@ -561,7 +567,7 @@ def PWaveGANDiscriminator(
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('downconv_4'):
     on_amount = lod - 1  # On at LOD 2, or 1 for 1 second audio
-    output, audio_lod = down_block(output, audio_lod, on_amount, dim * 16, kernel_len, 4)
+    output, audio_lod = down_block(output, audio_lod, on_amount, dim * 16, kernel_len, 4, last_block=(slice_len == 16384))
     output = batchnorm(output)
     output = lrelu(output)
 
@@ -575,7 +581,7 @@ def PWaveGANDiscriminator(
     # [32, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
       on_amount = lod  # On at LOD 1
-      output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 2)
+      output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 2, last_block=True)
       output = batchnorm(output)
       output = lrelu(output)
 
@@ -589,7 +595,7 @@ def PWaveGANDiscriminator(
     # [64, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
       on_amount = lod  # On at LOD 1
-      output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 4)
+      output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 4, last_block=True)
       output = batchnorm(output)
       output = lrelu(output)
 
