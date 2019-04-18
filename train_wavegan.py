@@ -226,7 +226,7 @@ def train(fps, args):
     return a + (b - a) * np.clip(t, 0.0, 1.0)
 
   def get_lod_at_step(step):
-    lod_progress = step / 500
+    lod_progress = step / 5000
     return np.piecewise(lod_progress,
                         [     lod_progress < 1, 1 <= lod_progress < 2,
                          2 <= lod_progress < 3, 3 <= lod_progress < 4,
