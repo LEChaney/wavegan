@@ -86,19 +86,18 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     code = inputs
     # Convolution layers
     with tf.variable_scope('conv_0'):
-      # Pre-Activation
       code = normalization(code)
-      code = activation(code)
+      code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
-      if is_upsampling:
-        code = conv1d_transpose(code, hidden_filters, kernel_size, stride=stride, padding='same', upsample=upsample)
-      else:
-        code = tf.layers.conv1d(code, hidden_filters, kernel_size, strides=stride, padding='same')
+      code = tf.layers.conv1d(code, hidden_filters, kernel_size, strides=1, padding='same')
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, filters, kernel_size, strides=1, padding='same')
+      if is_upsampling:
+        code = conv1d_transpose(code, filters, kernel_size, stride=stride, padding='same', upsample=upsample)
+      else:
+        code = tf.layers.conv1d(code, filters, kernel_size, strides=stride, padding='same')
 
     # Add shortcut connection
     code = shortcut + code
