@@ -184,6 +184,7 @@ def train(fps, args):
   # G_loss -= DIVERSITY_SCALE * diversity_score
   # tf.summary.scalar('diversity_score', diversity_score)
 
+  tf.summary.scalar('Gradient Penalty', gradient_penalty)
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
 

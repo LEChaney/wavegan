@@ -23,7 +23,37 @@ def avg_downsample(inputs, kernel_size=9, stride=4):
     return tf.layers.average_pooling1d(inputs, pool_size=kernel_size, strides=stride, padding='same')
 
 
-def residual_block(inputs, filters, kernel_size=9, stride=1, activation=lrelu, normalization=lambda x: x, phaseshuffle = lambda x: x):
+def conv1d_transpose(
+    inputs,
+    filters,
+    kernel_size,
+    stride=4,
+    padding='same',
+    upsample='zeros',
+    use_bias=True):
+  if upsample == 'zeros':
+    return tf.layers.conv2d_transpose(
+        tf.expand_dims(inputs, axis=1),
+        filters,
+        (1, kernel_size),
+        strides=(1, stride),
+        padding='same',
+        use_bias=use_bias)[:, 0]
+  elif upsample == 'nn':
+    x = nn_upsample(inputs, stride)
+
+    return tf.layers.conv1d(
+        x,
+        filters,
+        kernel_size,
+        1,
+        padding='same',
+        use_bias=use_bias)
+  else:
+    raise NotImplementedError
+
+
+def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=False, activation=lrelu, normalization=lambda x: x, phaseshuffle = lambda x: x):
   '''
   Args:
     inputs: 
@@ -34,12 +64,15 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, activation=lrelu, n
     normalization: Normalization function to use, default: lambda: x
   '''
   with tf.variable_scope(None, 'res_block'):
-    hidden_filters = min(inputs.shape[2], filters)
-
+    # Shortcut, handles various dimension changes
     shortcut = inputs
+    if upsample:
+      shortcut = nn_upsample(shortcut, stride)
+    elif stride > 1:
+      shortcut = avg_downsample(shortcut, kernel_size=stride, stride=stride)
     if shortcut.shape[2] != filters:
       with tf.variable_scope('learned_shortcut'):
-        shortcut = tf.layers.conv1d(shortcut, filters, kernel_size=1, strides=1, padding='same', use_bias=False)
+          shortcut = tf.layers.conv1d(shortcut, filters, kernel_size=1, strides=1, padding='same', use_bias=False)
         
     # Convolution layers
     code = inputs
@@ -47,15 +80,18 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, activation=lrelu, n
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, hidden_filters, kernel_size, strides=1, padding='same')
+      if upsample:
+        code = conv1d_transpose(code, filters, kernel_size, stride=stride, padding='same')
+      else:
+        code = tf.layers.conv1d(code, inputs.shape[2], kernel_size, strides=1, padding='same')
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, filters, kernel_size, strides=stride, padding='same')
+      code = tf.layers.conv1d(code, filters, kernel_size, strides=1 if upsample else stride, padding='same')
 
     # Add shortcut connection
-    code = shortcut + 0.1 * code # see https://github.com/LMescheder/GAN_stability/issues/11 for 0.1
+    code = shortcut + code
     return code
 
 
@@ -92,49 +128,46 @@ def RWaveGANGenerator(
   # Layer 0
   # [16, 1024] -> [64, 512]
   with tf.variable_scope('upconv_0'):
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm)
+    output = residual_block(output, dim * 8, kernel_len, stride=4, upsample=True, normalization=batchnorm)
+    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm)
 
   # Layer 1
   # [64, 512] -> [256, 256]
   with tf.variable_scope('upconv_1'):
-    output = nn_upsample(output, 4)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm)
+    output = residual_block(output, dim * 4, kernel_len, stride=4, upsample=True, normalization=batchnorm)
+    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm)
 
   # Layer 2
   # [256, 256] -> [1024, 128]
   with tf.variable_scope('upconv_2'):
-    output = nn_upsample(output, 4)
-    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm)
+    output = residual_block(output, dim * 2, kernel_len, stride=4, upsample=True, normalization=batchnorm)
+    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm)
 
   # Layer 3
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('upconv_3'):
-    output = nn_upsample(output, 4)
-    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm)
+    output = residual_block(output, dim * 1, kernel_len, stride=4, upsample=True, normalization=batchnorm)
+    output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
     
   # Layer 4
-  # [4096, 128] -> [16384, 64]
+  # [4096, 64] -> [16384, nch]
   with tf.variable_scope('upconv_4'):
-    output = nn_upsample(output, 4)
-    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm)
+    output = residual_block(output, nch, kernel_len, stride=4, upsample=True, normalization=batchnorm)
+    output = residual_block(output, nch, kernel_len, normalization=batchnorm)
+    output = tf.nn.tanh(output)
 
   # Layer 5
   # [16384, 64] -> [65536, nch]
-  with tf.variable_scope('upconv_5'):
-    output = nn_upsample(output, 4)
-    output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
-    output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
+  # with tf.variable_scope('upconv_5'):
+  #   output = nn_upsample(output, 4)
+  #   output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
+  #   output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
 
-  with tf.variable_scope('to_audio'):
-    output = batchnorm(output)
-    output = lrelu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
-    output = tf.nn.tanh(output)
+  # with tf.variable_scope('to_audio'):
+  #   output = batchnorm(output)
+  #   output = lrelu(output)
+  #   output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
+  #   output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
@@ -175,6 +208,7 @@ def RWaveGANDiscriminator(
     use_batchnorm=False,
     phaseshuffle_rad=0):
   batch_size = tf.shape(x)[0]
+  nch = x.shape[2]
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -187,49 +221,45 @@ def RWaveGANDiscriminator(
     phaseshuffle = lambda x: x
 
   output = x
-  with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim * 1, kernel_len, padding='same')
+  # with tf.variable_scope('from_audio'):
+  #   output = tf.layers.conv1d(output, dim * 1, kernel_len, padding='same')
 
   # Layer 0
   # [16384, 1] -> [4096, 64]
   with tf.variable_scope('downconv_0'):
-    output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, nch, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 1, kernel_len, stride=4, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('downconv_1'):
-    output = avg_downsample(output, kernel_len, stride=4)
-    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 2, kernel_len, stride=4, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('downconv_2'):
-    output = avg_downsample(output, kernel_len, stride=4)
-    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 2, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 4, kernel_len, stride=4, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('downconv_3'):
-    output = avg_downsample(output, kernel_len, stride=4)
-    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 4, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 8, kernel_len, stride=4, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('downconv_4'):
-    output = avg_downsample(output, kernel_len, stride=4)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 8, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+    output = residual_block(output, dim * 16, kernel_len, stride=4, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Layer 5
   # [64, 1024] -> [16, 2048]
-  with tf.variable_scope('downconv_5'):
-    output = avg_downsample(output, kernel_len, stride=4)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-    output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+  # with tf.variable_scope('downconv_5'):
+  #   output = avg_downsample(output, kernel_len, stride=4)
+  #   output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+  #   output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
 
   # Connect to single logit
   with tf.variable_scope('output'):
