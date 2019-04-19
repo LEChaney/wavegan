@@ -5,6 +5,7 @@ python train_wavegan.py train .\train_swordfighter ^
 --data_fast_wav ^
 --data_num_channels 2 ^
 --wavegan_disc_nupdates 1 ^
+--wavegan_kernel_len 26 ^
 --train_save_secs 600 ^
 --train_summary_secs 15
 
