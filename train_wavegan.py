@@ -16,6 +16,7 @@ from six.moves import xrange
 import loader
 from wavegan import WaveGANGenerator, WaveGANDiscriminator
 from progressive_wavegan import PWaveGANGenerator, PWaveGANDiscriminator
+from rwavegan import RWaveGANGenerator, RWaveGANDiscriminator
 
 
 """
@@ -38,7 +39,7 @@ def train(fps, args):
         repeat=True,
         shuffle=True,
         shuffle_buffer_size=4096,
-        prefetch_size=args.train_batch_size * 4,
+        prefetch_size=1,
         prefetch_gpu_num=args.data_prefetch_gpu_num)[:, :, 0]
 
   # Make z vector
@@ -48,12 +49,16 @@ def train(fps, args):
   if args.use_progressive_growing:
     lod = tf.placeholder(tf.float32, shape=[])
 
+  # Select model
+  build_generator = RWaveGANGenerator if args.use_resnet else WaveGANGenerator
+  build_discriminator = RWaveGANDiscriminator if args.use_resnet else WaveGANDiscriminator
+  
   # Make generator
   with tf.variable_scope('G'):
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, train=True, **args.wavegan_g_kwargs)
     else:
-      G_z = WaveGANGenerator(z, train=True, **args.wavegan_g_kwargs)
+      G_z = build_generator(z, train=True, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -71,8 +76,8 @@ def train(fps, args):
   print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
 
   # Summarize
-  # tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
-  # tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
+  tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
+  tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
   G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
   x_rms = tf.sqrt(tf.reduce_mean(tf.square(x[:, :, 0]), axis=1))
   tf.summary.histogram('x_rms_batch', x_rms)
@@ -85,7 +90,7 @@ def train(fps, args):
     if args.use_progressive_growing:
       D_x = PWaveGANDiscriminator(x, lod, **args.wavegan_d_kwargs)
     else:
-      D_x = WaveGANDiscriminator(x, **args.wavegan_d_kwargs)
+      D_x = build_discriminator(x, **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -105,7 +110,7 @@ def train(fps, args):
     if args.use_progressive_growing:
       D_G_z = PWaveGANDiscriminator(G_z, lod, **args.wavegan_d_kwargs)
     else:
-      D_G_z = WaveGANDiscriminator(G_z, **args.wavegan_d_kwargs)
+      D_G_z = build_discriminator(G_z, **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
@@ -159,7 +164,7 @@ def train(fps, args):
       if args.use_progressive_growing:
         D_interp = PWaveGANDiscriminator(interpolates, lod, **args.wavegan_d_kwargs)
       else:
-        D_interp = WaveGANDiscriminator(interpolates, **args.wavegan_d_kwargs)
+        D_interp = build_discriminator(interpolates, **args.wavegan_d_kwargs)
 
     LAMBDA = 10
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -331,12 +336,15 @@ def infer(args):
   if args.use_progressive_growing:
     lod = tf.placeholder(tf.float32, shape=[])
 
+  # Select model
+  build_generator = RWaveGANGenerator if args.use_resnet else WaveGANGenerator
+
   # Execute generator
   with tf.variable_scope('G'):
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, train=False, **args.wavegan_g_kwargs)
     else:
-      G_z = WaveGANGenerator(z, train=False, **args.wavegan_g_kwargs)
+      G_z = build_generator(z, train=False, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -654,6 +662,8 @@ if __name__ == '__main__':
       help='Radius of phase shuffle operation')
   wavegan_args.add_argument('--use_progressive_growing', action='store_true', dest='use_progressive_growing',
       help='Enable progressive growing of WaveGAN')
+  wavegan_args.add_argument('--use_resnet', action='store_true', dest='use_resnet',
+      help='Use Resnet version of WaveGAN')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -706,7 +716,8 @@ if __name__ == '__main__':
     incept_ckpt_fp='./eval/inception/best_acc-103005',
     incept_n=5000,
     incept_k=10,
-    use_progressive_growing=False)
+    use_progressive_growing=False,
+    use_resnet=False)
 
   args = parser.parse_args()
 
