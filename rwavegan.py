@@ -69,34 +69,36 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     # Default shortcut
     shortcut = inputs
 
-    # Pre-Activation
-    code = inputs
-    code = normalization(code)
-    code = activation(code)
-    code = phaseshuffle(code)
-
-    # Projection shortcut, handles various dimension changes
-    # The projection shortcut should come after the first batch norm and ReLU
-    # since it performs a 1x1 convolution.
-    if is_upsampling or stride > 1 or shortcut.shape[2] != filters:
-      if is_upsampling:
-        shortcut = nn_upsample(code, stride)
-      elif stride > 1:
-        shortcut = avg_downsample(code, stride)
-      with tf.variable_scope('learned_shortcut'):
+    # Resize shortcut to match output length
+    if is_upsampling:
+      shortcut = nn_upsample(shortcut, stride)
+    elif stride > 1:
+      shortcut = avg_downsample(shortcut, stride)
+    
+    # Project to match number of output features
+    if shortcut.shape[2] != filters:
+      with tf.variable_scope('proj_shortcut'):
           shortcut = tf.layers.conv1d(shortcut, filters, kernel_size=1, strides=1, padding='same', use_bias=False)
-        
+    
+    # Number of output features from first convolution layer
+    hidden_filters = min(inputs.shape[2], filters)
+
+    code = inputs
     # Convolution layers
     with tf.variable_scope('conv_0'):
+      # Pre-Activation
+      code = normalization(code)
+      code = activation(code)
+      code = phaseshuffle(code)
       if is_upsampling:
-        code = conv1d_transpose(code, filters, kernel_size, stride=stride, padding='same', upsample=upsample)
+        code = conv1d_transpose(code, hidden_filters, kernel_size, stride=stride, padding='same', upsample=upsample)
       else:
-        code = tf.layers.conv1d(code, inputs.shape[2], kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, hidden_filters, kernel_size, strides=stride, padding='same')
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, filters, kernel_size, strides=1 if is_upsampling else stride, padding='same')
+      code = tf.layers.conv1d(code, filters, kernel_size, strides=1, padding='same')
 
     # Add shortcut connection
     code = shortcut + code
