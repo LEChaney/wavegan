@@ -39,7 +39,7 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, activation=lrelu, n
     shortcut = inputs
     if shortcut.shape[2] != filters:
       with tf.variable_scope('learned_shortcut'):
-        shortcut = tf.layers.conv1d(shortcut, filters, kernel_size=1, strides=1, padding='same')
+        shortcut = tf.layers.conv1d(shortcut, filters, kernel_size=1, strides=1, padding='same', use_bias=False)
         
     # Convolution layers
     code = inputs
@@ -188,7 +188,7 @@ def RWaveGANDiscriminator(
 
   output = x
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim * 1, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, dim * 1, kernel_len, padding='same')
 
   # Layer 0
   # [16384, 1] -> [4096, 64]
