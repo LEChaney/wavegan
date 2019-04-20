@@ -70,6 +70,9 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
+    min_hidden_filters = 16
+    hidden_filters = min(filters, inputs.shape[2])
+    hidden_filters = max(hidden_filters // 4, min_hidden_filters)
 
     # Default shortcut
     shortcut = inputs
@@ -88,71 +91,45 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
                                       strides=1,
                                       padding='same',
                                       use_bias=False)
-    
-    # Number of output features from first convolution layer
-    # hidden_filters = min(inputs.shape[2], filters)
-
-    # Parameters for Fixup Initialization: https://arxiv.org/pdf/1901.09321.pdf
-    # act0_bias  = tf.get_variable('act0_bias' , [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
-    # act1_bias  = tf.get_variable('act1_bias' , [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
-    # conv0_bias = tf.get_variable('conv0_bias', [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
-    # conv1_bias = tf.get_variable('conv1_bias', [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
-    # conv1_mul  = tf.get_variable('conv1_mul' , [1, 1, filters        ], initializer=tf.ones_initializer() , trainable=True)
-    # fixup_weight_scale = 1 / math.sqrt(num_resblocks)
 
     code = inputs
-    # Convolution layers
-    # with tf.variable_scope('conv_0'):
-    #   code  = normalization(code)
-    #   code += act0_bias
-    #   code  = activation(code)  # Pre-Activation
-    #   code += conv0_bias
-    #   code  = fixup_weight_scale * tf.layers.conv1d(code, hidden_filters, kernel_size, 
-    #                                                 strides=1,
-    #                                                 padding='same',
-    #                                                 use_bias=False)
     
-    # Skip connection
-    with tf.variable_scope('conv_0'):
+    # Feature compression
+    with tf.variable_scope('compress_f'):
       code0 = code
-      code0 = normalization(code0)
-      code0 = activation(code0)
       if is_upsampling:
         code0 = nn_upsample(code0, stride)
       elif stride > 1:
         code0 = avg_downsample(code0, stride)
-      if shortcut.shape[2] != filters // 2:
-        code0 = tf.layers.conv1d(code0, filters // 2, kernel_size=1, strides=1, padding='same')
+      if code0.shape[2] != hidden_filters:
+        code0 = normalization(code0)
+        code0 = activation(code0)
+        code0 = tf.layers.conv1d(code0, hidden_filters, kernel_size=1, strides=1, padding='same')
 
-    # Upsample / Downsample / Same conv
-    with tf.variable_scope('conv_1'):
+    # Convolutions
+    with tf.variable_scope('conv_0'):
       code1 = code
       code1 = normalization(code1)
-      # code1 += act1_bias
       code1 = activation(code1)  # Pre-Activation
-      # code1 += conv1_bias
       if is_upsampling:
-        code1 = conv1d_transpose(code1, filters // 2, kernel_size, 
-                                stride=stride, 
-                                padding='same', 
-                                upsample=upsample)
-                                # use_bias=False, 
-                                # kernel_initializer=tf.zeros_initializer())
+        code1 = conv1d_transpose(code1, hidden_filters, kernel_size, stride=stride, padding='same')
       else:
-        code1 = tf.layers.conv1d(code1, filters // 2, kernel_size,
-                                strides=stride,
-                                padding='same')
-                                # use_bias=False,
-                                # kernel_initializer=tf.zeros_initializer())
-      # code1 *= conv1_mul
-
-    # Conv with skip inputs
-    with tf.variable_scope('conv_2'):
+        code1 = tf.layers.conv1d(code1, hidden_filters, kernel_size, strides=stride, padding='same')
+    with tf.variable_scope('conv_1'):
       code2 = tf.concat([code0, code1], 2)
       code2 = normalization(code2)
       code2 = activation(code2)  # Pre-Activation
-      code2 = tf.layers.conv1d(code2, filters // 2, kernel_size, strides=1, padding='same')
-    code = tf.concat([code1, code2], 2)
+      code2 = tf.layers.conv1d(code2, hidden_filters, kernel_size, strides=1, padding='same')
+
+    # Feature expansion
+    with tf.variable_scope('expand_f'):
+      code3 = tf.concat([code1, code2], 2)
+      if code3.shape[2] != filters:
+        code3 = normalization(code3)
+        code3 = activation(code3)
+        code3 = tf.layers.conv1d(code2, filters, kernel_size=1, strides=1, padding='same')
+    
+    code = code3
 
     # Add shortcut connection
     code = shortcut + code
