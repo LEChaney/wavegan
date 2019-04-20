@@ -210,15 +210,16 @@ def RWaveGANGenerator(
   # # Layer 5
   # # [4096, 64] -> [16384, 32]
   with tf.variable_scope('block_layer_4'):
-    output = up_res_block(output, dim // 2)
-    output =    res_block(output, dim // 2)
+    output = up_res_block(output, nch)
+    output =    res_block(output, nch)
+    output = tf.nn.tanh(output)
 
   # To audio layer
   # [16384, 32] -> [16384, 1]
-  with tf.variable_scope('to_audio'):
-    output = batchnorm(output)
-    output = lrelu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
+  # with tf.variable_scope('to_audio'):
+  #   output = batchnorm(output)
+  #   output = lrelu(output)
+  #   output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
     # output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -283,15 +284,16 @@ def RWaveGANDiscriminator(
                           stride=4,
                           normalization=batchnorm)
 
-  # From audio layer
   output = x
-  with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim // 2, kernel_len, padding='same')
+  
+  # From audio layer
+  # with tf.variable_scope('from_audio'):
+  #   output = tf.layers.conv1d(output, dim // 2, kernel_len, padding='same')
 
   # Layer 0
   # [16384, 32] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    output =      res_block(output, dim // 2)
+    output =      res_block(output, nch     )
     output = down_res_block(output, dim  * 1)
     output = phaseshuffle(output)
 
