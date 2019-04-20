@@ -219,7 +219,7 @@ def RWaveGANGenerator(
     output = batchnorm(output)
     output = lrelu(output)
     output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
-    output = tf.nn.tanh(output)
+    # output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
