@@ -321,7 +321,7 @@ def RWaveGANDiscriminator(
   with tf.variable_scope('block_layer_4'):
     output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
-    output = phaseshuffle(output)
+    # output = phaseshuffle(output)
 
   # # Layer 5
   # # [16, 1024] -> [16, 1024]
