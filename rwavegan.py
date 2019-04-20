@@ -56,7 +56,7 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_resblocks=10, activation=lrelu, normalization=lambda x: x):
+def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, activation=lrelu, normalization=lambda x: x):
   '''
   Args:
     inputs: 
@@ -153,7 +153,6 @@ def RWaveGANGenerator(
   assert slice_len in [16384, 32768, 65536]
   size_scale = 16 * slice_len // 16384
   batch_size = tf.shape(z)[0]
-  num_resblocks = 5
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
@@ -164,12 +163,10 @@ def RWaveGANGenerator(
     return residual_block(inputs, filters, kernel_len, 
                           stride=4,
                           upsample=upsample,
-                          num_resblocks=num_resblocks,
                           normalization=batchnorm,
                           activation=tf.nn.relu)
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
-                          num_resblocks=num_resblocks, 
                           normalization=batchnorm,
                           activation=tf.nn.relu)
 
@@ -179,12 +176,6 @@ def RWaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, size_scale * dim * 16)
     output = tf.reshape(output, [batch_size, size_scale, dim * 16])
-
-  # Layer 0
-  # [16, 1024] -> [16, 1024]
-  # with tf.variable_scope('block_layer_0'):
-  #   output = res_block(output, dim * 8)
-  #   output = res_block(output, dim * 8)
 
   # Layer 0
   # [16, 1024] -> [64, 512]
@@ -211,19 +202,10 @@ def RWaveGANGenerator(
     output =    res_block(output, dim * 1)
     
   # # Layer 4
-  # # [4096, 64] -> [16384, 32]
+  # # [4096, 64] -> [16384, nch]
   with tf.variable_scope('block_layer_4'):
     output = up_res_block(output, nch)
     output =    res_block(output, nch)
-    output = tf.nn.tanh(output)
-
-  # To audio layer
-  # [16384, 32] -> [16384, 1]
-  # with tf.variable_scope('to_audio'):
-  #   output = batchnorm(output)
-  #   output = lrelu(output)
-  #   output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
-    # output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
@@ -265,7 +247,6 @@ def RWaveGANDiscriminator(
     phaseshuffle_rad=0):
   batch_size = tf.shape(x)[0]
   nch = x.shape[2]
-  num_resblocks = 5
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -279,25 +260,19 @@ def RWaveGANDiscriminator(
 
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
-                          num_resblocks=num_resblocks,
                           normalization=batchnorm)
   def down_res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
-                          num_resblocks=num_resblocks,
                           stride=4,
                           normalization=batchnorm)
 
   output = x
 
-  # From audio layer
-  # with tf.variable_scope('from_audio'):
-  #   output = tf.layers.conv1d(output, dim // 2, kernel_len, padding='same')
-
   # Layer 0
-  # [16384, 32] -> [4096, 64]
+  # [16384, nch] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    output =      res_block(output, nch     )
-    output = down_res_block(output, dim  * 1)
+    output =      res_block(output, nch)
+    output = down_res_block(output, dim)
     output = phaseshuffle(output)
 
   # Layer 1
@@ -326,13 +301,6 @@ def RWaveGANDiscriminator(
   with tf.variable_scope('block_layer_4'):
     output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
-    # output = phaseshuffle(output)
-
-  # # Layer 5
-  # # [16, 1024] -> [16, 1024]
-  # with tf.variable_scope('block_layer_5'):
-  #   output = res_block(output, dim * 8)
-  #   output = res_block(output, dim * 16)
 
   # Connect to single logit
   with tf.variable_scope('output'):

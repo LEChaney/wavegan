@@ -243,11 +243,16 @@ def train(fps, args):
                          5, lambda x: np_lerp_clip((x - 5), 5, 6),
                          6])
 
+  # Dynamic memory allocation
+  config = tf.ConfigProto()
+  config.gpu_options.allow_growth = True
+
   # Run training
   with tf.train.MonitoredTrainingSession(
       checkpoint_dir=args.train_dir,
       save_checkpoint_secs=args.train_save_secs,
-      save_summaries_secs=args.train_summary_secs) as sess:
+      save_summaries_secs=args.train_summary_secs,
+      config=config) as sess:
     print('-' * 80)
     print('Training has started. Please use \'tensorboard --logdir={}\' to monitor.'.format(args.train_dir))
     
