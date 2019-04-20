@@ -90,46 +90,69 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
                                       use_bias=False)
     
     # Number of output features from first convolution layer
-    hidden_filters = min(inputs.shape[2], filters)
+    # hidden_filters = min(inputs.shape[2], filters)
 
     # Parameters for Fixup Initialization: https://arxiv.org/pdf/1901.09321.pdf
-    act0_bias  = tf.get_variable('act0_bias' , [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
-    act1_bias  = tf.get_variable('act1_bias' , [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
-    conv0_bias = tf.get_variable('conv0_bias', [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
-    conv1_bias = tf.get_variable('conv1_bias', [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
-    conv1_mul  = tf.get_variable('conv1_mul' , [1, 1, filters        ], initializer=tf.ones_initializer() , trainable=True)
-    fixup_weight_scale = 1 / math.sqrt(num_resblocks)
+    # act0_bias  = tf.get_variable('act0_bias' , [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
+    # act1_bias  = tf.get_variable('act1_bias' , [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
+    # conv0_bias = tf.get_variable('conv0_bias', [1, 1, inputs.shape[2]], initializer=tf.zeros_initializer(), trainable=True)
+    # conv1_bias = tf.get_variable('conv1_bias', [1, 1, hidden_filters ], initializer=tf.zeros_initializer(), trainable=True)
+    # conv1_mul  = tf.get_variable('conv1_mul' , [1, 1, filters        ], initializer=tf.ones_initializer() , trainable=True)
+    # fixup_weight_scale = 1 / math.sqrt(num_resblocks)
 
     code = inputs
     # Convolution layers
+    # with tf.variable_scope('conv_0'):
+    #   code  = normalization(code)
+    #   code += act0_bias
+    #   code  = activation(code)  # Pre-Activation
+    #   code += conv0_bias
+    #   code  = fixup_weight_scale * tf.layers.conv1d(code, hidden_filters, kernel_size, 
+    #                                                 strides=1,
+    #                                                 padding='same',
+    #                                                 use_bias=False)
+    
+    # Skip connection
     with tf.variable_scope('conv_0'):
-      code  = normalization(code)
-      code += act0_bias
-      code  = activation(code)  # Pre-Activation
-      code += conv0_bias
-      code  = fixup_weight_scale * tf.layers.conv1d(code, hidden_filters, kernel_size, 
-                                                    strides=1,
-                                                    padding='same',
-                                                    use_bias=False)
-    with tf.variable_scope('conv_1'):
-      code  = normalization(code)
-      code += act1_bias
-      code  = activation(code)  # Pre-Activation
-      code += conv1_bias
+      code0 = code
+      code0 = normalization(code0)
+      code0 = activation(code0)
       if is_upsampling:
-        code = conv1d_transpose(code, filters, kernel_size, 
+        code0 = nn_upsample(code0, stride)
+      elif stride > 1:
+        code0 = avg_downsample(code0, stride)
+      if shortcut.shape[2] != filters // 2:
+        code0 = tf.layers.conv1d(code0, filters // 2, kernel_size=1, strides=1, padding='same')
+
+    # Upsample / Downsample / Same conv
+    with tf.variable_scope('conv_1'):
+      code1 = code
+      code1 = normalization(code1)
+      # code1 += act1_bias
+      code1 = activation(code1)  # Pre-Activation
+      # code1 += conv1_bias
+      if is_upsampling:
+        code1 = conv1d_transpose(code1, filters // 2, kernel_size, 
                                 stride=stride, 
                                 padding='same', 
-                                upsample=upsample, 
-                                use_bias=False, 
-                                kernel_initializer=tf.zeros_initializer())
+                                upsample=upsample)
+                                # use_bias=False, 
+                                # kernel_initializer=tf.zeros_initializer())
       else:
-        code = tf.layers.conv1d(code, filters, kernel_size,
+        code1 = tf.layers.conv1d(code1, filters // 2, kernel_size,
                                 strides=stride,
-                                padding='same',
-                                use_bias=False,
-                                kernel_initializer=tf.zeros_initializer())
-      code *= conv1_mul
+                                padding='same')
+                                # use_bias=False,
+                                # kernel_initializer=tf.zeros_initializer())
+      # code1 *= conv1_mul
+
+    # Conv with skip inputs
+    with tf.variable_scope('conv_2'):
+      code2 = tf.concat([code0, code1], 2)
+      code2 = normalization(code2)
+      code2 = activation(code2)  # Pre-Activation
+      code2 = tf.layers.conv1d(code2, filters // 2, kernel_size, strides=1, padding='same')
+    code = tf.concat([code1, code2], 2)
 
     # Add shortcut connection
     code = shortcut + code
@@ -152,12 +175,25 @@ def RWaveGANGenerator(
   assert slice_len in [16384, 32768, 65536]
   size_scale = 16 * slice_len // 16384
   batch_size = tf.shape(z)[0]
-  num_resblocks = 10
+  num_resblocks = 5
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
     batchnorm = lambda x: x
+
+  def up_res_block(inputs, filters):
+    return residual_block(inputs, filters, kernel_len, 
+                          stride=4,
+                          upsample=upsample,
+                          num_resblocks=num_resblocks,
+                          normalization=batchnorm,
+                          activation=tf.nn.relu)
+  def res_block(inputs, filters):
+    return residual_block(inputs, filters, kernel_len,
+                          num_resblocks=num_resblocks, 
+                          normalization=batchnorm,
+                          activation=tf.nn.relu)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
@@ -166,52 +202,41 @@ def RWaveGANGenerator(
     output = tf.layers.dense(output, size_scale * dim * 16)
     output = tf.reshape(output, [batch_size, size_scale, dim * 16])
 
-  def up_res_block(inputs, filters):
-    return residual_block(inputs, filters, kernel_len, 
-                          stride=4,
-                          upsample=upsample,
-                          num_resblocks=num_resblocks,
-                          normalization=batchnorm)
-  def res_block(inputs, filters):
-    return residual_block(inputs, filters, kernel_len,
-                          num_resblocks=num_resblocks, 
-                          normalization=batchnorm)
-
   # Layer 0
   # [16, 1024] -> [16, 1024]
   # with tf.variable_scope('block_layer_0'):
   #   output = res_block(output, dim * 8)
   #   output = res_block(output, dim * 8)
 
-  # Layer 1
+  # Layer 0
   # [16, 1024] -> [64, 512]
   with tf.variable_scope('block_layer_0'):
     output = up_res_block(output, dim * 8)
-    output =    res_block(output, dim * 8)
+    # output =    res_block(output, dim * 8)
 
-  # Layer 2
+  # Layer 1
   # [64, 512] -> [256, 256]
   with tf.variable_scope('block_layer_1'):
     output = up_res_block(output, dim * 4)
-    output =    res_block(output, dim * 4)
+    # output =    res_block(output, dim * 4)
 
-  # Layer 3
+  # Layer 2
   # [256, 256] -> [1024, 128]
   with tf.variable_scope('block_layer_2'):
     output = up_res_block(output, dim * 2)
-    output =    res_block(output, dim * 2)
+    # output =    res_block(output, dim * 2)
 
-  # Layer 4
+  # Layer 3
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('block_layer_3'):
     output = up_res_block(output, dim * 1)
-    output =    res_block(output, dim * 1)
+    # output =    res_block(output, dim * 1)
     
-  # # Layer 5
+  # # Layer 4
   # # [4096, 64] -> [16384, 32]
   with tf.variable_scope('block_layer_4'):
     output = up_res_block(output, nch)
-    output =    res_block(output, nch)
+    # output =    res_block(output, nch)
     output = tf.nn.tanh(output)
 
   # To audio layer
@@ -262,7 +287,7 @@ def RWaveGANDiscriminator(
     phaseshuffle_rad=0):
   batch_size = tf.shape(x)[0]
   nch = x.shape[2]
-  num_resblocks = 10
+  num_resblocks = 5
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -285,7 +310,7 @@ def RWaveGANDiscriminator(
                           normalization=batchnorm)
 
   output = x
-  
+
   # From audio layer
   # with tf.variable_scope('from_audio'):
   #   output = tf.layers.conv1d(output, dim // 2, kernel_len, padding='same')
@@ -293,35 +318,35 @@ def RWaveGANDiscriminator(
   # Layer 0
   # [16384, 32] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    output =      res_block(output, nch     )
+    # output =      res_block(output, nch     )
     output = down_res_block(output, dim  * 1)
     output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('block_layer_1'):
-    output =      res_block(output, dim * 1)
+    # output =      res_block(output, dim * 1)
     output = down_res_block(output, dim * 2)
     output = phaseshuffle(output)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('block_layer_2'):
-    output =      res_block(output, dim * 2)
+    # output =      res_block(output, dim * 2)
     output = down_res_block(output, dim * 4)
     output = phaseshuffle(output)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('block_layer_3'):
-    output =      res_block(output, dim * 4)
+    # output =      res_block(output, dim * 4)
     output = down_res_block(output, dim * 8)
     output = phaseshuffle(output)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('block_layer_4'):
-    output =      res_block(output, dim * 8)
+    # output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
     # output = phaseshuffle(output)
 
