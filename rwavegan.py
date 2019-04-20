@@ -178,48 +178,48 @@ def RWaveGANGenerator(
                           normalization=batchnorm)
 
   # Layer 0
+  # [16, 1024] -> [16, 1024]
+  # with tf.variable_scope('block_layer_0'):
+  #   output = res_block(output, dim * 8)
+  #   output = res_block(output, dim * 8)
+
+  # Layer 1
   # [16, 1024] -> [64, 512]
-  with tf.variable_scope('upconv_0'):
+  with tf.variable_scope('block_layer_0'):
     output = up_res_block(output, dim * 8)
     output =    res_block(output, dim * 8)
 
-  # Layer 1
+  # Layer 2
   # [64, 512] -> [256, 256]
-  with tf.variable_scope('upconv_1'):
+  with tf.variable_scope('block_layer_1'):
     output = up_res_block(output, dim * 4)
     output =    res_block(output, dim * 4)
 
-  # Layer 2
+  # Layer 3
   # [256, 256] -> [1024, 128]
-  with tf.variable_scope('upconv_2'):
+  with tf.variable_scope('block_layer_2'):
     output = up_res_block(output, dim * 2)
     output =    res_block(output, dim * 2)
 
-  # Layer 3
+  # Layer 4
   # [1024, 128] -> [4096, 64]
-  with tf.variable_scope('upconv_3'):
+  with tf.variable_scope('block_layer_3'):
     output = up_res_block(output, dim * 1)
     output =    res_block(output, dim * 1)
     
-  # Layer 4
-  # [4096, 64] -> [16384, nch]
-  with tf.variable_scope('upconv_4'):
-    output = up_res_block(output, nch)
-    output =    res_block(output, nch)
+  # # Layer 5
+  # # [4096, 64] -> [16384, 32]
+  with tf.variable_scope('block_layer_4'):
+    output = up_res_block(output, dim // 2)
+    output =    res_block(output, dim // 2)
+
+  # To audio layer
+  # [16384, 32] -> [16384, 1]
+  with tf.variable_scope('to_audio'):
+    output = batchnorm(output)
+    output = lrelu(output)
+    output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
     output = tf.nn.tanh(output)
-
-  # Layer 5
-  # [16384, 64] -> [65536, nch]
-  # with tf.variable_scope('upconv_5'):
-  #   output = nn_upsample(output, 4)
-  #   output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
-  #   output = residual_block(output, dim * 1, kernel_len, normalization=batchnorm)
-
-  # with tf.variable_scope('to_audio'):
-  #   output = batchnorm(output)
-  #   output = lrelu(output)
-  #   output = tf.layers.conv1d(output, nch, kernel_len, padding='SAME')
-  #   output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
@@ -283,53 +283,51 @@ def RWaveGANDiscriminator(
                           stride=4,
                           normalization=batchnorm)
 
+  # From audio layer
   output = x
-  # with tf.variable_scope('from_audio'):
-  #   output = tf.layers.conv1d(output, dim * 1, kernel_len, padding='same')
+  with tf.variable_scope('from_audio'):
+    output = tf.layers.conv1d(output, dim // 2, kernel_len, padding='same')
 
   # Layer 0
-  # [16384, 1] -> [4096, 64]
-  with tf.variable_scope('downconv_0'):
-    output = residual_block(output, nch, kernel_len,
-                            num_resblocks=num_resblocks,
-                            normalization=lambda x: x, # No normalization on input layer
-                            activation=lambda x: x) # No activation on input layer
-    output = down_res_block(output, dim * 1)
+  # [16384, 32] -> [4096, 64]
+  with tf.variable_scope('block_layer_0'):
+    output =      res_block(output, dim // 2)
+    output = down_res_block(output, dim  * 1)
     output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
-  with tf.variable_scope('downconv_1'):
+  with tf.variable_scope('block_layer_1'):
     output =      res_block(output, dim * 1)
     output = down_res_block(output, dim * 2)
     output = phaseshuffle(output)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
-  with tf.variable_scope('downconv_2'):
+  with tf.variable_scope('block_layer_2'):
     output =      res_block(output, dim * 2)
     output = down_res_block(output, dim * 4)
     output = phaseshuffle(output)
 
   # Layer 3
   # [256, 256] -> [64, 512]
-  with tf.variable_scope('downconv_3'):
+  with tf.variable_scope('block_layer_3'):
     output =      res_block(output, dim * 4)
     output = down_res_block(output, dim * 8)
     output = phaseshuffle(output)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
-  with tf.variable_scope('downconv_4'):
-    output =      res_block(output, dim * 8 )
+  with tf.variable_scope('block_layer_4'):
+    output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
+    output = phaseshuffle(output)
 
-  # Layer 5
-  # [64, 1024] -> [16, 2048]
-  # with tf.variable_scope('downconv_5'):
-  #   output = avg_downsample(output, kernel_len, stride=4)
-  #   output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
-  #   output = residual_block(output, dim * 16, kernel_len, normalization=batchnorm, phaseshuffle=phaseshuffle)
+  # # Layer 5
+  # # [16, 1024] -> [16, 1024]
+  # with tf.variable_scope('block_layer_5'):
+  #   output = res_block(output, dim * 8)
+  #   output = res_block(output, dim * 16)
 
   # Connect to single logit
   with tf.variable_scope('output'):
