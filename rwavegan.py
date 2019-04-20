@@ -97,10 +97,6 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
     # Feature compression
     with tf.variable_scope('compress_f'):
       code0 = code
-      if is_upsampling:
-        code0 = nn_upsample(code0, stride)
-      elif stride > 1:
-        code0 = avg_downsample(code0, stride)
       if code0.shape[2] != hidden_filters:
         code0 = normalization(code0)
         code0 = activation(code0)
@@ -108,7 +104,7 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
 
     # Convolutions
     with tf.variable_scope('conv_0'):
-      code1 = code
+      code1 = code0
       code1 = normalization(code1)
       code1 = activation(code1)  # Pre-Activation
       if is_upsampling:
@@ -116,6 +112,11 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
       else:
         code1 = tf.layers.conv1d(code1, hidden_filters, kernel_size, strides=stride, padding='same')
     with tf.variable_scope('conv_1'):
+      # Fix code0 dimensions before concat
+      if is_upsampling:
+        code0 = nn_upsample(code0, stride)
+      elif stride > 1:
+        code0 = avg_downsample(code0, stride)
       code2 = tf.concat([code0, code1], 2)
       code2 = normalization(code2)
       code2 = activation(code2)  # Pre-Activation
@@ -189,31 +190,31 @@ def RWaveGANGenerator(
   # [16, 1024] -> [64, 512]
   with tf.variable_scope('block_layer_0'):
     output = up_res_block(output, dim * 8)
-    # output =    res_block(output, dim * 8)
+    output =    res_block(output, dim * 8)
 
   # Layer 1
   # [64, 512] -> [256, 256]
   with tf.variable_scope('block_layer_1'):
     output = up_res_block(output, dim * 4)
-    # output =    res_block(output, dim * 4)
+    output =    res_block(output, dim * 4)
 
   # Layer 2
   # [256, 256] -> [1024, 128]
   with tf.variable_scope('block_layer_2'):
     output = up_res_block(output, dim * 2)
-    # output =    res_block(output, dim * 2)
+    output =    res_block(output, dim * 2)
 
   # Layer 3
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('block_layer_3'):
     output = up_res_block(output, dim * 1)
-    # output =    res_block(output, dim * 1)
+    output =    res_block(output, dim * 1)
     
   # # Layer 4
   # # [4096, 64] -> [16384, 32]
   with tf.variable_scope('block_layer_4'):
     output = up_res_block(output, nch)
-    # output =    res_block(output, nch)
+    output =    res_block(output, nch)
     output = tf.nn.tanh(output)
 
   # To audio layer
@@ -295,35 +296,35 @@ def RWaveGANDiscriminator(
   # Layer 0
   # [16384, 32] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    # output =      res_block(output, nch     )
+    output =      res_block(output, nch     )
     output = down_res_block(output, dim  * 1)
     output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('block_layer_1'):
-    # output =      res_block(output, dim * 1)
+    output =      res_block(output, dim * 1)
     output = down_res_block(output, dim * 2)
     output = phaseshuffle(output)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('block_layer_2'):
-    # output =      res_block(output, dim * 2)
+    output =      res_block(output, dim * 2)
     output = down_res_block(output, dim * 4)
     output = phaseshuffle(output)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('block_layer_3'):
-    # output =      res_block(output, dim * 4)
+    output =      res_block(output, dim * 4)
     output = down_res_block(output, dim * 8)
     output = phaseshuffle(output)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('block_layer_4'):
-    # output =      res_block(output, dim * 8)
+    output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
     # output = phaseshuffle(output)
 
