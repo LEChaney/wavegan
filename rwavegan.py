@@ -56,7 +56,7 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_resblocks=10, activation=lrelu, normalization=lambda x: x, phaseshuffle = lambda x: x):
+def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_resblocks=10, activation=lrelu, normalization=lambda x: x):
   '''
   Args:
     inputs: 
@@ -67,7 +67,6 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
     num_resblocks: The number of residual blocks in the network, used for scaling initialization
     activation: Activation function to use default lrelu
     normalization: Normalization function to use, default: identity function
-    phaseshuffle: Phase shuffling function to use, default: identity function
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
@@ -107,7 +106,6 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
       code  = normalization(code)
       code += act0_bias
       code  = activation(code)  # Pre-Activation
-      code  = phaseshuffle(code)
       code += conv0_bias
       code  = fixup_weight_scale * tf.layers.conv1d(code, hidden_filters, kernel_size, 
                                                     strides=1,
@@ -117,7 +115,6 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, num_
       code  = normalization(code)
       code += act1_bias
       code  = activation(code)  # Pre-Activation
-      code  = phaseshuffle(code)
       code += conv1_bias
       if is_upsampling:
         code = conv1d_transpose(code, filters, kernel_size, 
@@ -279,14 +276,12 @@ def RWaveGANDiscriminator(
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
                           num_resblocks=num_resblocks,
-                          normalization=batchnorm,
-                          phaseshuffle=phaseshuffle)
+                          normalization=batchnorm)
   def down_res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
                           num_resblocks=num_resblocks,
                           stride=4,
-                          normalization=batchnorm,
-                          phaseshuffle=phaseshuffle)
+                          normalization=batchnorm)
 
   output = x
   # with tf.variable_scope('from_audio'):
@@ -297,24 +292,28 @@ def RWaveGANDiscriminator(
   with tf.variable_scope('downconv_0'):
     output =      res_block(output, nch    )
     output = down_res_block(output, dim * 1)
+    output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('downconv_1'):
     output =      res_block(output, dim * 1)
     output = down_res_block(output, dim * 2)
+    output = phaseshuffle(output)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('downconv_2'):
     output =      res_block(output, dim * 2)
     output = down_res_block(output, dim * 4)
+    output = phaseshuffle(output)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('downconv_3'):
     output =      res_block(output, dim * 4)
     output = down_res_block(output, dim * 8)
+    output = phaseshuffle(output)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
