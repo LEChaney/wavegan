@@ -290,7 +290,10 @@ def RWaveGANDiscriminator(
   # Layer 0
   # [16384, 1] -> [4096, 64]
   with tf.variable_scope('downconv_0'):
-    output =      res_block(output, nch    )
+    output = residual_block(output, nch, kernel_len,
+                            num_resblocks=num_resblocks,
+                            normalization=lambda x: x, # No normalization on input layer
+                            activation=lambda x: x) # No activation on input layer
     output = down_res_block(output, dim * 1)
     output = phaseshuffle(output)
 
