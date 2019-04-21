@@ -70,9 +70,9 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
-    min_hidden_filters = 4
+    min_hidden_filters = 2
     hidden_filters = min(filters, inputs.shape[2])
-    hidden_filters = max(hidden_filters // 4, min_hidden_filters)
+    hidden_filters = max(hidden_filters // 2, min_hidden_filters)
 
     # Default shortcut
     shortcut = inputs
@@ -206,14 +206,15 @@ def RWaveGANGenerator(
   with tf.variable_scope('block_layer_4'):
     output = up_res_block(output, nch)
     output =    res_block(output, nch)
+    output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope=tf.get_variable_scope().name)
-    if slice_len == 16384:
-      assert len(update_ops) == 10
-    else:
-      assert len(update_ops) == 12
+    # if slice_len == 16384:
+    #   assert len(update_ops) == 10
+    # else:
+    #   assert len(update_ops) == 12
     with tf.control_dependencies(update_ops):
       output = tf.identity(output)
 
