@@ -56,7 +56,7 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, activation=lrelu, normalization=lambda x: x):
+def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, activate_inputs=True, activation=lrelu, normalization=lambda x: x):
   '''
   Args:
     inputs: 
@@ -70,9 +70,11 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
-    min_hidden_filters = 4
-    hidden_filters = min(filters, inputs.shape[2])
-    hidden_filters = max(hidden_filters // 4, min_hidden_filters)
+    min_internal_filters = 2
+    filters_div = 4
+    internal_filters_0 = min(filters, inputs.shape[2])
+    internal_filters_0 = max(internal_filters_0 // filters_div, min_internal_filters)
+    internal_filters_1 = max(filters // filters_div, min_internal_filters)
 
     # Default shortcut
     shortcut = inputs
@@ -86,21 +88,18 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     # Project to match number of output features
     if shortcut.shape[2] != filters:
       with tf.variable_scope('proj_shortcut'):
-          shortcut = tf.layers.conv1d(shortcut, filters,
-                                      kernel_size=1,
-                                      strides=1,
-                                      padding='same',
-                                      use_bias=False)
-
-    code = inputs
+        shortcut = tf.layers.conv1d(shortcut, filters,
+                                    kernel_size=1,
+                                    strides=1,
+                                    padding='valid')
     
     # Feature compression
     with tf.variable_scope('compress_f'):
-      code0 = code
-      if hidden_filters < code0.shape[2]:
+      code0 = inputs
+      if activate_inputs:
         code0 = normalization(code0)
         code0 = activation(code0)
-        code0 = tf.layers.conv1d(code0, hidden_filters, kernel_size=1, strides=1, padding='same')
+      code0 = tf.layers.conv1d(code0, internal_filters_0, kernel_size=1, strides=1, padding='same')
 
     # Convolutions
     with tf.variable_scope('conv_0'):
@@ -108,9 +107,9 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
       code1 = normalization(code1)
       code1 = activation(code1)  # Pre-Activation
       if is_upsampling:
-        code1 = conv1d_transpose(code1, hidden_filters, kernel_size, stride=stride, padding='same')
+        code1 = conv1d_transpose(code1, internal_filters_0, kernel_size, stride=stride, padding='same')
       else:
-        code1 = tf.layers.conv1d(code1, hidden_filters, kernel_size, strides=stride, padding='same')
+        code1 = tf.layers.conv1d(code1, internal_filters_0, kernel_size, strides=stride, padding='same')
     with tf.variable_scope('conv_1'):
       # Fix code0 dimensions before concat
       if is_upsampling:
@@ -120,19 +119,17 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
       code2 = tf.concat([code0, code1], 2)
       code2 = normalization(code2)
       code2 = activation(code2)  # Pre-Activation
-      code2 = tf.layers.conv1d(code2, hidden_filters, kernel_size, strides=1, padding='same')
+      code2 = tf.layers.conv1d(code2, internal_filters_1, kernel_size, strides=1, padding='same')
 
     # Feature expansion
     with tf.variable_scope('expand_f'):
       code3 = tf.concat([code1, code2], 2)
-      if code3.shape[2] != filters:
-        code3 = normalization(code3)
-        code3 = activation(code3)
-        code3 = tf.layers.conv1d(code2, filters, kernel_size=1, strides=1, padding='same')
-    
-    code = code3
+      code3 = normalization(code3)
+      code3 = activation(code3)
+      code3 = tf.layers.conv1d(code3, filters, kernel_size=1, strides=1, padding='same')
 
     # Add shortcut connection
+    code = code3
     code = shortcut + code
     return code
 
@@ -163,12 +160,10 @@ def RWaveGANGenerator(
     return residual_block(inputs, filters, kernel_len, 
                           stride=4,
                           upsample=upsample,
-                          normalization=batchnorm,
-                          activation=lrelu)
+                          normalization=batchnorm)
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm,
-                          activation=lrelu)
+                          normalization=batchnorm)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
@@ -259,21 +254,22 @@ def RWaveGANDiscriminator(
   else:
     phaseshuffle = lambda x: x
 
-  def res_block(inputs, filters):
+  def res_block(inputs, filters, activate_inputs=True):
     return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm)
-  def down_res_block(inputs, filters):
+                          normalization=batchnorm,
+                          activate_inputs=activate_inputs)
+  def down_res_block(inputs, filters, activate_inputs=True):
     return residual_block(inputs, filters, kernel_len,
                           stride=4,
-                          normalization=batchnorm)
+                          normalization=batchnorm,
+                          activate_inputs=activate_inputs)
 
   output = x
 
   # Layer 0
   # [16384, nch] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    output = residual_block(output, nch, kernel_len,
-                            normalization=lambda x: x, activation=lambda x: x) # No normalization or activation should be done to the input layer
+    output =      res_block(output, nch, activate_inputs=False)
     output = down_res_block(output, dim)
     output = phaseshuffle(output)
 
