@@ -164,11 +164,11 @@ def RWaveGANGenerator(
                           stride=4,
                           upsample=upsample,
                           normalization=batchnorm,
-                          activation=tf.nn.relu)
+                          activation=lrelu)
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
                           normalization=batchnorm,
-                          activation=tf.nn.relu)
+                          activation=lrelu)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
