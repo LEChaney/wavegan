@@ -31,7 +31,7 @@ def conv1d_transpose(
     padding='same',
     upsample='zeros',
     use_bias=True,
-    kernel_initializer=None):
+    kernel_initializer=tf.initializers.he_uniform()):
   if upsample == 'zeros':
     return tf.layers.conv2d_transpose(
         tf.expand_dims(inputs, axis=1),
@@ -56,7 +56,17 @@ def conv1d_transpose(
     raise NotImplementedError
 
 
-def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, activate_inputs=True, activation=lrelu, normalization=lambda x: x):
+def residual_block(
+    inputs, 
+    filters, 
+    kernel_size=9, 
+    stride=1, 
+    upsample=None, 
+    activate_inputs=True, 
+    activation=lrelu, 
+    normalization=lambda x: x,
+    kernel_initializer=tf.initializers.he_uniform(),
+    output_layer_initializer=tf.initializers.he_uniform()):
   '''
   Args:
     inputs: 
@@ -78,20 +88,23 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
 
     # Default shortcut
     shortcut = inputs
-
-    # Resize shortcut to match output length
-    if is_upsampling:
-      shortcut = nn_upsample(shortcut, stride)
-    elif stride > 1:
-      shortcut = avg_downsample(shortcut, stride)
     
-    # Project to match number of output features
-    if shortcut.shape[2] != filters:
+    # Project to match output shape
+    if (shortcut.shape[2] != filters or stride > 1) and not is_upsampling:
+      with tf.variable_scope('proj_shortcut'):
+        shortcut = tf.layers.conv1d(shortcut, filters,
+                                    kernel_size=1,
+                                    strides=stride,
+                                    padding='valid',
+                                    kernel_initializer=output_layer_initializer)
+    elif is_upsampling:
       with tf.variable_scope('proj_shortcut'):
         shortcut = tf.layers.conv1d(shortcut, filters,
                                     kernel_size=1,
                                     strides=1,
-                                    padding='valid')
+                                    padding='valid',
+                                    kernel_initializer=output_layer_initializer)
+        shortcut = nn_upsample(shortcut, stride)
     
     # Feature compression
     with tf.variable_scope('compress_f'):
@@ -99,26 +112,26 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
       if activate_inputs:
         code = normalization(code)
         code = activation(code)
-      code = tf.layers.conv1d(code, internal_filters_0, kernel_size=1, strides=1, padding='same')
+      code = tf.layers.conv1d(code, internal_filters_0, kernel_size=1, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     # Convolutions
     with tf.variable_scope('conv_0'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       if is_upsampling:
-        code = conv1d_transpose(code, internal_filters_0, kernel_size, stride=stride, padding='same')
+        code = conv1d_transpose(code, internal_filters_0, kernel_size, stride=stride, padding='same', kernel_initializer=kernel_initializer)
       else:
-        code = tf.layers.conv1d(code, internal_filters_0, kernel_size, strides=stride, padding='same')
+        code = tf.layers.conv1d(code, internal_filters_0, kernel_size, strides=stride, padding='same', kernel_initializer=kernel_initializer)
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
-      code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=1, padding='same')
+      code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     # Feature expansion
     with tf.variable_scope('expand_f'):
       code = normalization(code)
       code = activation(code)
-      code = tf.layers.conv1d(code, filters, kernel_size=1, strides=1, padding='same')
+      code = tf.layers.conv1d(code, filters, kernel_size=1, strides=1, padding='same', kernel_initializer=output_layer_initializer)
 
     # Add shortcut connection
     code = shortcut + code
@@ -147,20 +160,23 @@ def RWaveGANGenerator(
   else:
     batchnorm = lambda x: x
 
-  def up_res_block(inputs, filters):
+  def up_res_block(inputs, filters, output_layer_initializer=tf.initializers.he_uniform()):
     return residual_block(inputs, filters, kernel_len, 
                           stride=4,
                           upsample=upsample,
-                          normalization=batchnorm)
-  def res_block(inputs, filters):
+                          normalization=batchnorm,
+                          output_layer_initializer=output_layer_initializer)
+  def res_block(inputs, filters, output_layer_initializer=tf.initializers.he_uniform()):
     return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm)
+                          normalization=batchnorm,
+                          output_layer_initializer=output_layer_initializer)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   output = z
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, size_scale * dim * 16)
+    output = tf.layers.dense(output, size_scale * dim * 16,
+                             kernel_initializer=tf.initializers.he_uniform())
     output = tf.reshape(output, [batch_size, size_scale, dim * 16])
 
   # Layer 0
@@ -191,7 +207,8 @@ def RWaveGANGenerator(
   # # [4096, 64] -> [16384, nch]
   with tf.variable_scope('block_layer_4'):
     output = up_res_block(output, nch)
-    output =    res_block(output, nch)
+    output =    res_block(output, nch,
+                          output_layer_initializer=tf.initializers.glorot_uniform())
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -296,7 +313,8 @@ def RWaveGANDiscriminator(
     output = batchnorm(output)
     output = lrelu(output)
     output = tf.reshape(output, [batch_size, -1])
-    output = tf.layers.dense(output, 1)[:, 0]
+    output = tf.layers.dense(output, 1,
+                             kernel_initializer=tf.initializers.he_uniform())[:, 0]
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 
