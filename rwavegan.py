@@ -97,7 +97,7 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     # Feature compression
     with tf.variable_scope('compress_f'):
       code0 = code
-      if code0.shape[2] != hidden_filters:
+      if code0.shape[2] > hidden_filters:
         code0 = normalization(code0)
         code0 = activation(code0)
         code0 = tf.layers.conv1d(code0, hidden_filters, kernel_size=1, strides=1, padding='same')
@@ -272,7 +272,8 @@ def RWaveGANDiscriminator(
   # Layer 0
   # [16384, nch] -> [4096, 64]
   with tf.variable_scope('block_layer_0'):
-    output =      res_block(output, nch)
+    output = residual_block(output, nch, kernel_len,
+                            normalization=lambda x: x, activation=lambda x: x) # No normalization or activation should be done to the input layer
     output = down_res_block(output, dim)
     output = phaseshuffle(output)
 
