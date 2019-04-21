@@ -95,41 +95,32 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     
     # Feature compression
     with tf.variable_scope('compress_f'):
-      code0 = inputs
+      code = inputs
       if activate_inputs:
-        code0 = normalization(code0)
-        code0 = activation(code0)
-      code0 = tf.layers.conv1d(code0, internal_filters_0, kernel_size=1, strides=1, padding='same')
+        code = normalization(code)
+        code = activation(code)
+      code = tf.layers.conv1d(code, internal_filters_0, kernel_size=1, strides=1, padding='same')
 
     # Convolutions
     with tf.variable_scope('conv_0'):
-      code1 = code0
-      code1 = normalization(code1)
-      code1 = activation(code1)  # Pre-Activation
+      code = normalization(code)
+      code = activation(code)  # Pre-Activation
       if is_upsampling:
-        code1 = conv1d_transpose(code1, internal_filters_0, kernel_size, stride=stride, padding='same')
+        code = conv1d_transpose(code, internal_filters_0, kernel_size, stride=stride, padding='same')
       else:
-        code1 = tf.layers.conv1d(code1, internal_filters_0, kernel_size, strides=stride, padding='same')
+        code = tf.layers.conv1d(code, internal_filters_0, kernel_size, strides=stride, padding='same')
     with tf.variable_scope('conv_1'):
-      # Fix code0 dimensions before concat
-      if is_upsampling:
-        code0 = nn_upsample(code0, stride)
-      elif stride > 1:
-        code0 = avg_downsample(code0, stride)
-      code2 = tf.concat([code0, code1], 2)
-      code2 = normalization(code2)
-      code2 = activation(code2)  # Pre-Activation
-      code2 = tf.layers.conv1d(code2, internal_filters_1, kernel_size, strides=1, padding='same')
+      code = normalization(code)
+      code = activation(code)  # Pre-Activation
+      code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=1, padding='same')
 
     # Feature expansion
     with tf.variable_scope('expand_f'):
-      code3 = tf.concat([code1, code2], 2)
-      code3 = normalization(code3)
-      code3 = activation(code3)
-      code3 = tf.layers.conv1d(code3, filters, kernel_size=1, strides=1, padding='same')
+      code = normalization(code)
+      code = activation(code)
+      code = tf.layers.conv1d(code, filters, kernel_size=1, strides=1, padding='same')
 
     # Add shortcut connection
-    code = code3
     code = shortcut + code
     return code
 
