@@ -70,7 +70,7 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
-    min_hidden_filters = 2
+    min_hidden_filters = 4
     hidden_filters = min(filters, inputs.shape[2])
     hidden_filters = max(hidden_filters // 4, min_hidden_filters)
 
