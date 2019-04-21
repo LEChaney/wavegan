@@ -97,10 +97,9 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     # Feature compression
     with tf.variable_scope('compress_f'):
       code0 = code
-      if code0.shape[2] > hidden_filters:
-        code0 = normalization(code0)
-        code0 = activation(code0)
-        code0 = tf.layers.conv1d(code0, hidden_filters, kernel_size=1, strides=1, padding='same')
+      code0 = normalization(code0)
+      code0 = activation(code0)
+      code0 = tf.layers.conv1d(code0, hidden_filters, kernel_size=1, strides=1, padding='same')
 
     # Convolutions
     with tf.variable_scope('conv_0'):
@@ -125,10 +124,9 @@ def residual_block(inputs, filters, kernel_size=9, stride=1, upsample=None, acti
     # Feature expansion
     with tf.variable_scope('expand_f'):
       code3 = tf.concat([code1, code2], 2)
-      if code3.shape[2] != filters:
-        code3 = normalization(code3)
-        code3 = activation(code3)
-        code3 = tf.layers.conv1d(code2, filters, kernel_size=1, strides=1, padding='same')
+      code3 = normalization(code3)
+      code3 = activation(code3)
+      code3 = tf.layers.conv1d(code2, filters, kernel_size=1, strides=1, padding='same')
     
     code = code3
 
