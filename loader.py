@@ -1,5 +1,7 @@
 from scipy.io.wavfile import read as wavread
 import numpy as np
+import os
+import pandas as pd
 
 import tensorflow as tf
 
@@ -82,7 +84,8 @@ def decode_extract_and_batch(
     shuffle=False,
     shuffle_buffer_size=None,
     prefetch_size=None,
-    prefetch_gpu_num=None):
+    prefetch_gpu_num=None,
+    extract_labels=False):
   """Decodes audio file paths into mini-batches of samples.
 
   Args:
@@ -108,8 +111,28 @@ def decode_extract_and_batch(
     A tuple of np.float32 tensors representing audio waveforms.
       audio: [batch_size, slice_len, 1, nch]
   """
+
   # Create dataset of filepaths
   dataset = tf.data.Dataset.from_tensor_slices(fps)
+
+  # Extract audio labels
+  if extract_labels:
+    # Extract basic label from filename.
+    # Uses first word, separated by underscores or spaces
+    labels = []
+    for fp in fps:
+      labels.append(os.path.basename(fp).split('.')[0].split(' ')[0].split('_')[0])
+    
+    # Build vocab set
+    vocab = set(labels)
+    vocab = pd.Series(range(len(vocab)), index=vocab)
+
+    # Extract integer label ids for each audio file
+    label_ids = vocab.loc[labels].values
+
+    # Add label ids to dataset
+    label_ids_dataset = tf.data.Dataset.from_tensor_slices(label_ids)
+    dataset = tf.data.Dataset.zip((dataset, label_ids_dataset))
 
   # Shuffle all filepaths every epoch
   if shuffle:
@@ -119,7 +142,7 @@ def decode_extract_and_batch(
   if repeat:
     dataset = dataset.repeat()
 
-  def _decode_audio_shaped(fp):
+  def _decode_audio_shaped(fp, *argv):
     _decode_audio_closure = lambda _fp: decode_audio(
       _fp,
       fs=decode_fs,
@@ -134,7 +157,7 @@ def decode_extract_and_batch(
         stateful=False)
     audio.set_shape([None, 1, decode_num_channels])
 
-    return audio
+    return (audio, *argv)
 
   # Decode audio
   dataset = dataset.map(
@@ -170,9 +193,14 @@ def decode_extract_and_batch(
 
     return audio_slices
 
-  def _slice_dataset_wrapper(audio):
+  def _slice_dataset_wrapper(audio, *argv):
     audio_slices = _slice(audio)
-    return tf.data.Dataset.from_tensor_slices(audio_slices)
+    out_dataset = tf.data.Dataset.from_tensor_slices(audio_slices)
+    if len(argv) > 0:
+      label_id = argv[0]
+      label_id_dataset = tf.data.Dataset.from_tensors(label_id)
+      out_dataset = tf.data.Dataset.zip((out_dataset, label_id_dataset))
+    return out_dataset
 
   # Extract parallel sliceuences from both audio and features
   dataset = dataset.flat_map(_slice_dataset_wrapper)
