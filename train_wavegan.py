@@ -185,7 +185,7 @@ def train(fps, args):
     gradients = tf.gradients(D_interp, [interpolates])[0]
     # gradients = tf.gradients(D_x, [x])[0]
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
-    gradient_penalty = tf.reduce_mean((slopes - 1) ** 2.)
+    gradient_penalty = tf.reduce_mean((slopes) ** 2.)
     D_loss += LAMBDA * gradient_penalty
   else:
     raise NotImplementedError()
@@ -229,7 +229,7 @@ def train(fps, args):
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
+        learning_rate=3e-4,
         beta1=0.0,
         beta2=0.9)
   else:
