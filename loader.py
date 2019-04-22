@@ -89,7 +89,7 @@ def create_or_load_vocab_and_label_ids(fps, vocab_dir):
   if os.path.isfile(vocab_fp):
     vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True).astype(np.int32)
   else:
-    vocab = set(labels + ['<UNK>'])
+    vocab = set(labels)
     vocab = pd.Series(range(len(vocab)), index=vocab, dtype=np.int32)
     vocab.to_csv(vocab_fp, header=None)
 

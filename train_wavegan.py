@@ -559,12 +559,8 @@ def incept(args):
     # Get random label from vocab
     ys = []
     for _ in range(args.incept_n):
-      label = '<UNK>'
-      while label == '<UNK>':
-        y = np.random.randint(len(vocab))
-        label = vocab.index[y]
-        if label != '<UNK>':
-          ys.append(y)
+      y = np.random.randint(len(vocab))
+      ys.append(y)
 
   # Load or generate latents
   z_fp = os.path.join(incept_dir, 'z.pkl')
