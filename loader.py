@@ -85,7 +85,8 @@ def decode_extract_and_batch(
     shuffle_buffer_size=None,
     prefetch_size=None,
     prefetch_gpu_num=None,
-    extract_labels=False):
+    extract_labels=False,
+    vocab_dir='train'):
   """Decodes audio file paths into mini-batches of samples.
 
   Args:
@@ -107,6 +108,7 @@ def decode_extract_and_batch(
     prefetch_size: Number of examples to prefetch from the queue.
     prefetch_gpu_num: If specified, prefetch examples to GPU.
     extract_labels: If specified, labels and vocab are returned by the loader for each audio file.
+    vocab_dir: The directory the vocabulary file will saved to / loaded from in case training restarts.
 
   Returns:
     A tuple of np.float32 tensors representing audio waveforms.
@@ -128,9 +130,16 @@ def decode_extract_and_batch(
     for fp in fps:
       labels.append(os.path.basename(fp).split('.')[0].split(' ')[0].split('_')[0])
     
-    # Build vocab set
-    vocab = set(labels)
-    vocab = pd.Series(range(len(vocab)), index=vocab)
+    # Build and save the vocabulary or load the vocabulary from file
+    vocab_fp = os.path.join(vocab_dir, 'vocab.csv')
+    if os.path.isfile(vocab_fp):
+      vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True)
+      print('Loaded vocab file: {}'.format(vocab_fp))
+    else:
+      vocab = set(labels + ['<UNK>'])
+      vocab = pd.Series(range(len(vocab)), index=vocab)
+      vocab.to_csv(vocab_fp, header=None)
+      print('Saved vocab file: {}'.format(vocab_fp))
 
     # Extract integer label ids for each audio file
     label_ids = vocab.loc[labels].values
