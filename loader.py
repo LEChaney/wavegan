@@ -1,6 +1,7 @@
 from scipy.io.wavfile import read as wavread
 import numpy as np
 import os
+import glob
 import pandas as pd
 
 import tensorflow as tf
@@ -67,6 +68,37 @@ def decode_audio(fp, fs=None, num_channels=1, normalize=False, fast_wav=False):
   return _wav
 
 
+def create_or_load_vocab_and_label_ids(fps, vocab_dir):
+  '''
+  Args
+    fps: Either a directory of list of files that will be used to construct labels
+    vocab_dir: Directory to save / restore the vocab from
+  '''
+  if isinstance(fps, str) and os.path.isdir(fps):
+    print('Creating labels from files in director: {}'.format(fps))
+    fps = glob.glob(os.path.join(fps, '**/*.wav'), recursive=True)
+
+  # Extract basic label from filename.
+  # Uses first word, separated by underscores or spaces
+  labels = []
+  for fp in fps:
+    labels.append(os.path.basename(fp).split('.')[0].split(' ')[0].split('_')[0])
+  
+  # Build and save the vocabulary or load the vocabulary from file
+  vocab_fp = os.path.join(vocab_dir, 'vocab.csv')
+  if os.path.isfile(vocab_fp):
+    vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True).astype(np.int32)
+  else:
+    vocab = set(labels + ['<UNK>'])
+    vocab = pd.Series(range(len(vocab)), index=vocab, dtype=np.int32)
+    vocab.to_csv(vocab_fp, header=None)
+
+  # Extract integer label ids for each audio file
+  label_ids = vocab.loc[labels].values
+
+  return vocab, label_ids
+
+
 def decode_extract_and_batch(
     fps,
     batch_size,
@@ -124,25 +156,7 @@ def decode_extract_and_batch(
 
   # Extract audio labels
   if extract_labels:
-    # Extract basic label from filename.
-    # Uses first word, separated by underscores or spaces
-    labels = []
-    for fp in fps:
-      labels.append(os.path.basename(fp).split('.')[0].split(' ')[0].split('_')[0])
-    
-    # Build and save the vocabulary or load the vocabulary from file
-    vocab_fp = os.path.join(vocab_dir, 'vocab.csv')
-    if os.path.isfile(vocab_fp):
-      vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True)
-      print('Loaded vocab file: {}'.format(vocab_fp))
-    else:
-      vocab = set(labels + ['<UNK>'])
-      vocab = pd.Series(range(len(vocab)), index=vocab)
-      vocab.to_csv(vocab_fp, header=None)
-      print('Saved vocab file: {}'.format(vocab_fp))
-
-    # Extract integer label ids for each audio file
-    label_ids = vocab.loc[labels].values
+    vocab, label_ids = create_or_load_vocab_and_label_ids(fps, vocab_dir)
 
     # Add label ids to dataset
     label_ids_dataset = tf.data.Dataset.from_tensor_slices(label_ids)

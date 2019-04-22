@@ -48,7 +48,9 @@ def WaveGANGenerator(
     dim=64,
     use_batchnorm=False,
     upsample='zeros',
-    train=False):
+    train=False,
+    embedding=None,
+    nlabels=1):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -173,7 +175,8 @@ def WaveGANDiscriminator(
     kernel_len=25,
     dim=64,
     use_batchnorm=False,
-    phaseshuffle_rad=0):
+    phaseshuffle_rad=0,
+    labels=None):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
 
