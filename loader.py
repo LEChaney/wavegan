@@ -106,10 +106,15 @@ def decode_extract_and_batch(
     shuffle_buffer_size: Number of examples to queue up before grabbing a batch.
     prefetch_size: Number of examples to prefetch from the queue.
     prefetch_gpu_num: If specified, prefetch examples to GPU.
+    extract_labels: If specified, labels and vocab are returned by the loader for each audio file.
 
   Returns:
     A tuple of np.float32 tensors representing audio waveforms.
       audio: [batch_size, slice_len, 1, nch]
+    Additionally, if extract_labels is specified, then the loader will 
+    return a labels for each audio file in the batch as well as the vocabulary set
+      label: [batch_size] dtype: int64
+      vocab: Pandas Series containing map from label texts to integer label ids and vice versa
   """
 
   # Create dataset of filepaths
@@ -223,4 +228,8 @@ def decode_extract_and_batch(
   # Get tensors
   iterator = dataset.make_one_shot_iterator()
   
-  return iterator.get_next()
+  if extract_labels:
+    x, y = iterator.get_next()
+    return x, y, vocab
+  else:
+    return iterator.get_next()
