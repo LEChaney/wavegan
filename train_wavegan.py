@@ -215,7 +215,7 @@ def train(fps, args):
   # Single cycle learning rate schedule
   lower_bound = 5e-6
   upper_bound = 5e-5
-  final_lr = 5e-7
+  final_lr = 1e-6
   cycle = 30000
   half_cycle = cycle // 2
   learning_rate = tf.cond(tf.train.get_or_create_global_step() > cycle, 
