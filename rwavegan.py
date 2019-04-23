@@ -202,7 +202,8 @@ def RWaveGANGenerator(
 
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm)
+                          normalization=batchnorm,
+                          activation=tf.nn.relu)
 
   # Conditioning input
   output = z
@@ -215,13 +216,13 @@ def RWaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
-    output = batchnorm(output)
-    output = tf.nn.relu(output)
   dim_mul //= 2
 
   # Layer 0
   # [16, 1024] -> [64, 512]
   with tf.variable_scope('upconv_0'):
+    output = batchnorm(output)
+    output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
     res_block(output, dim * dim_mul)
   dim_mul //= 2
@@ -229,6 +230,8 @@ def RWaveGANGenerator(
   # Layer 1
   # [64, 512] -> [256, 256]
   with tf.variable_scope('upconv_1'):
+    output = batchnorm(output)
+    output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
     res_block(output, dim * dim_mul)
   dim_mul //= 2
@@ -236,6 +239,8 @@ def RWaveGANGenerator(
   # Layer 2
   # [256, 256] -> [1024, 128]
   with tf.variable_scope('upconv_2'):
+    output = batchnorm(output)
+    output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
     res_block(output, dim * dim_mul)
   dim_mul //= 2
@@ -243,6 +248,8 @@ def RWaveGANGenerator(
   # Layer 3
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('upconv_3'):
+    output = batchnorm(output)
+    output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
     res_block(output, dim * dim_mul)
 
@@ -250,6 +257,8 @@ def RWaveGANGenerator(
     # Layer 4
     # [4096, 64] -> [16384, nch]
     with tf.variable_scope('upconv_4'):
+      output = batchnorm(output)
+      output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 4, upsample=upsample)
       res_block(output, nch)
     output = tf.nn.tanh(output)
@@ -257,12 +266,16 @@ def RWaveGANGenerator(
     # Layer 4
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
+      output = batchnorm(output)
+      output = tf.nn.relu(output)
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample)
       res_block(output, dim)
 
     # Layer 5
     # [16384, 64] -> [32768, nch]
     with tf.variable_scope('upconv_5'):
+      output = batchnorm(output)
+      output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 2, upsample=upsample)
       res_block(output, nch)
     output = tf.nn.tanh(output)
@@ -270,12 +283,16 @@ def RWaveGANGenerator(
     # Layer 4
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
+      output = batchnorm(output)
+      output = tf.nn.relu(output)
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample)
       res_block(output, dim)
 
     # Layer 5
     # [16384, 64] -> [65536, nch]
     with tf.variable_scope('upconv_5'):
+      output = batchnorm(output)
+      output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 4, upsample=upsample)
       res_block(output, nch)
     output = tf.nn.tanh(output)
@@ -343,48 +360,62 @@ def RWaveGANDiscriminator(
   # [16384, 1] -> [4096, 64]
   output = x
   with tf.variable_scope('downconv_0'):
-    output =        res_block(output, nch, activate_inputs=False)
+    output = res_block(output, nch, activate_inputs=False)
+    output = batchnorm(output)
+    output = lrelu(output)
     output = tf.layers.conv1d(output, dim, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('downconv_1'):
-    output =        res_block(output, dim)
+    output = res_block(output, dim * 1)
+    output = batchnorm(output)
+    output = lrelu(output)
     output = tf.layers.conv1d(output, dim * 2, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('downconv_2'):
-    output =        res_block(output, dim * 2)
+    output = res_block(output, dim * 2)
+    output = batchnorm(output)
+    output = lrelu(output)
     output = tf.layers.conv1d(output, dim * 4, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('downconv_3'):
-    output =        res_block(output, dim * 4)
+    output = res_block(output, dim * 4)
+    output = batchnorm(output)
+    output = lrelu(output)
     output = tf.layers.conv1d(output, dim * 8, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('downconv_4'):
-    output =        res_block(output, dim * 8)
+    output = res_block(output, dim * 8)
+    output = batchnorm(output)
+    output = lrelu(output)
     output = tf.layers.conv1d(output, dim * 16, kernel_len, 4, padding='SAME')
 
   if slice_len == 32768:
     # Layer 5
     # [32, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
-      output =        res_block(output, dim * 16)
+      output = res_block(output, dim * 16)
+      output = batchnorm(output)
+      output = lrelu(output)
       output = tf.layers.conv1d(output, dim * 32, kernel_len, 2, padding='SAME')
   elif slice_len == 65536:
     # Layer 5
     # [64, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
-      output =        res_block(output, dim * 32)
+      output = res_block(output, dim * 32)
+      output = batchnorm(output)
+      output = lrelu(output)
       output = tf.layers.conv1d(output, dim * 32, kernel_len, 4, padding='SAME')
   
   # Activate final layer
