@@ -205,6 +205,40 @@ def train(fps, args):
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
 
+
+  # learning_rate = tf.train.exponential_decay(
+  #   2e-6,
+  #   tf.train.get_or_create_global_step(),
+  #   decay_steps=1000,
+  #   decay_rate=100,
+  # )
+  # Single cycle learning rate schedule
+  lower_bound = 5e-6
+  upper_bound = 5e-5
+  final_lr = 5e-7
+  cycle = 30000
+  half_cycle = cycle // 2
+  learning_rate = tf.cond(tf.train.get_or_create_global_step() > cycle, 
+    # Final learning rate reached for single cycle schedule
+    lambda: final_lr,
+    lambda: tf.cond(tf.equal(tf.mod(tf.floor(tf.train.get_or_create_global_step() / half_cycle), 2), 0),
+      # Increasing learning rate till half way through cycle
+      lambda: tf.train.polynomial_decay(
+        lower_bound,
+        tf.train.get_or_create_global_step(),
+        half_cycle,
+        end_learning_rate=upper_bound,
+        cycle=True),
+      # Decreasing learning rate from half way till end of cycle
+      lambda: tf.train.polynomial_decay(
+        upper_bound,
+        tf.train.get_or_create_global_step(),
+        half_cycle,
+        end_learning_rate=lower_bound,
+        cycle=True)))
+
+  tf.summary.scalar('learning_rate', learning_rate)
+
   # Create (recommended) optimizer
   if args.wavegan_loss == 'dcgan':
     G_opt = tf.train.AdamOptimizer(
@@ -225,11 +259,11 @@ def train(fps, args):
         learning_rate=5e-5)
   elif args.wavegan_loss == 'wgan-gp':
     G_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
+        learning_rate=learning_rate,
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
+        learning_rate=learning_rate,
         beta1=0.0,
         beta2=0.9)
   else:
