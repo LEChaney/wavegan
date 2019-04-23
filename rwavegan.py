@@ -224,7 +224,7 @@ def RWaveGANGenerator(
     output = batchnorm(output)
     output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
-    res_block(output, dim * dim_mul)
+    output = res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 1
@@ -233,7 +233,7 @@ def RWaveGANGenerator(
     output = batchnorm(output)
     output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
-    res_block(output, dim * dim_mul)
+    output = res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 2
@@ -242,7 +242,7 @@ def RWaveGANGenerator(
     output = batchnorm(output)
     output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
-    res_block(output, dim * dim_mul)
+    output = res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 3
@@ -251,7 +251,7 @@ def RWaveGANGenerator(
     output = batchnorm(output)
     output = tf.nn.relu(output)
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
-    res_block(output, dim * dim_mul)
+    output = res_block(output, dim * dim_mul)
 
   if slice_len == 16384:
     # Layer 4
@@ -260,7 +260,7 @@ def RWaveGANGenerator(
       output = batchnorm(output)
       output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 4, upsample=upsample)
-      res_block(output, nch)
+      output = res_block(output, nch)
     output = tf.nn.tanh(output)
   elif slice_len == 32768:
     # Layer 4
@@ -269,7 +269,7 @@ def RWaveGANGenerator(
       output = batchnorm(output)
       output = tf.nn.relu(output)
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample)
-      res_block(output, dim)
+      output = res_block(output, dim)
 
     # Layer 5
     # [16384, 64] -> [32768, nch]
@@ -277,7 +277,7 @@ def RWaveGANGenerator(
       output = batchnorm(output)
       output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 2, upsample=upsample)
-      res_block(output, nch)
+      output = res_block(output, nch)
     output = tf.nn.tanh(output)
   elif slice_len == 65536:
     # Layer 4
@@ -286,7 +286,7 @@ def RWaveGANGenerator(
       output = batchnorm(output)
       output = tf.nn.relu(output)
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample)
-      res_block(output, dim)
+      output = res_block(output, dim)
 
     # Layer 5
     # [16384, 64] -> [65536, nch]
@@ -294,7 +294,7 @@ def RWaveGANGenerator(
       output = batchnorm(output)
       output = tf.nn.relu(output)
       output = conv1d_transpose(output, nch, kernel_len, 4, upsample=upsample)
-      res_block(output, nch)
+      output = res_block(output, nch)
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
