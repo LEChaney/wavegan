@@ -212,32 +212,33 @@ def train(fps, args):
   #   decay_steps=1000,
   #   decay_rate=100,
   # )
+  
   # Single cycle learning rate schedule
-  lower_bound = 5e-6
-  upper_bound = 5e-5
-  final_lr = 1e-6
-  cycle = 30000
-  half_cycle = cycle // 2
-  learning_rate = tf.cond(tf.train.get_or_create_global_step() > cycle, 
-    # Final learning rate reached for single cycle schedule
-    lambda: final_lr,
-    lambda: tf.cond(tf.equal(tf.mod(tf.floor(tf.train.get_or_create_global_step() / half_cycle), 2), 0),
-      # Increasing learning rate till half way through cycle
-      lambda: tf.train.polynomial_decay(
-        lower_bound,
-        tf.train.get_or_create_global_step(),
-        half_cycle,
-        end_learning_rate=upper_bound,
-        cycle=True),
-      # Decreasing learning rate from half way till end of cycle
-      lambda: tf.train.polynomial_decay(
-        upper_bound,
-        tf.train.get_or_create_global_step(),
-        half_cycle,
-        end_learning_rate=lower_bound,
-        cycle=True)))
+  # lower_bound = 5e-6
+  # upper_bound = 5e-5
+  # final_lr = 1e-6
+  # cycle = 30000
+  # half_cycle = cycle // 2
+  # learning_rate = tf.cond(tf.train.get_or_create_global_step() > cycle, 
+  #   # Final learning rate reached for single cycle schedule
+  #   lambda: final_lr,
+  #   lambda: tf.cond(tf.equal(tf.mod(tf.floor(tf.train.get_or_create_global_step() / half_cycle), 2), 0),
+  #     # Increasing learning rate till half way through cycle
+  #     lambda: tf.train.polynomial_decay(
+  #       lower_bound,
+  #       tf.train.get_or_create_global_step(),
+  #       half_cycle,
+  #       end_learning_rate=upper_bound,
+  #       cycle=True),
+  #     # Decreasing learning rate from half way till end of cycle
+  #     lambda: tf.train.polynomial_decay(
+  #       upper_bound,
+  #       tf.train.get_or_create_global_step(),
+  #       half_cycle,
+  #       end_learning_rate=lower_bound,
+  #       cycle=True)))
 
-  tf.summary.scalar('learning_rate', learning_rate)
+  # tf.summary.scalar('learning_rate', learning_rate)
 
   # Create (recommended) optimizer
   if args.wavegan_loss == 'dcgan':
