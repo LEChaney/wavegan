@@ -364,7 +364,6 @@ def RWaveGANDiscriminator(
     output = batchnorm(output)
     output = lrelu(output)
     output = tf.layers.conv1d(output, dim, kernel_len, 4, padding='SAME')
-    output = phaseshuffle(output)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
@@ -372,8 +371,8 @@ def RWaveGANDiscriminator(
     output = res_block(output, dim * 1)
     output = batchnorm(output)
     output = lrelu(output)
-    output = tf.layers.conv1d(output, dim * 2, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
+    output = tf.layers.conv1d(output, dim * 2, kernel_len, 4, padding='SAME')
 
   # Layer 2
   # [1024, 128] -> [256, 256]
@@ -381,8 +380,8 @@ def RWaveGANDiscriminator(
     output = res_block(output, dim * 2)
     output = batchnorm(output)
     output = lrelu(output)
-    output = tf.layers.conv1d(output, dim * 4, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
+    output = tf.layers.conv1d(output, dim * 4, kernel_len, 4, padding='SAME')
 
   # Layer 3
   # [256, 256] -> [64, 512]
@@ -390,8 +389,8 @@ def RWaveGANDiscriminator(
     output = res_block(output, dim * 4)
     output = batchnorm(output)
     output = lrelu(output)
-    output = tf.layers.conv1d(output, dim * 8, kernel_len, 4, padding='SAME')
     output = phaseshuffle(output)
+    output = tf.layers.conv1d(output, dim * 8, kernel_len, 4, padding='SAME')
 
   # Layer 4
   # [64, 512] -> [16, 1024]
@@ -399,6 +398,7 @@ def RWaveGANDiscriminator(
     output = res_block(output, dim * 8)
     output = batchnorm(output)
     output = lrelu(output)
+    output = phaseshuffle(output)
     output = tf.layers.conv1d(output, dim * 16, kernel_len, 4, padding='SAME')
 
   if slice_len == 32768:
