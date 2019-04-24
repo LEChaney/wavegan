@@ -243,16 +243,13 @@ def RWaveGANGenerator(
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
     batchnorm = lambda x: x
-
-  def res_block(inputs, filters):
-    return bottleneck_block(inputs, filters, kernel_len,
-                            normalization=batchnorm)
   
   def up_res_block(inputs, filters, stride=4):
-    return bottleneck_block(inputs, filters, kernel_len, 
-                            stride=stride,
-                            upsample=upsample,
-                            normalization=batchnorm)
+    return residual_block(inputs, filters, kernel_len, 
+                          stride=stride,
+                          upsample=upsample,
+                          normalization=batchnorm,
+                          activation=tf.nn.relu)
 
   # Conditioning input
   output = z
@@ -265,67 +262,64 @@ def RWaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
-  dim_mul //= 2
 
   # Layer 0
-  # [16, 1024] -> [64, 512]
+  # [16, 1024] -> [64, 1024]
   with tf.variable_scope('upconv_0'):
     output = up_res_block(output, dim * dim_mul)
-    output =    res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 1
-  # [64, 512] -> [256, 256]
+  # [64, 1024] -> [256, 512]
   with tf.variable_scope('upconv_1'):
     output = up_res_block(output, dim * dim_mul)
-    output =    res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 2
-  # [256, 256] -> [1024, 128]
+  # [256, 512] -> [1024, 256]
   with tf.variable_scope('upconv_2'):
     output = up_res_block(output, dim * dim_mul)
-    output =    res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 3
-  # [1024, 128] -> [4096, 64]
+  # [1024, 256] -> [4096, 128]
   with tf.variable_scope('upconv_3'):
     output = up_res_block(output, dim * dim_mul)
-    output =    res_block(output, dim * dim_mul)
 
   if slice_len == 16384:
     # Layer 4
-    # [4096, 64] -> [16384, nch]
+    # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
-      output = up_res_block(output, nch)
-      output =    res_block(output, nch)
-    output = tf.nn.tanh(output)
+      output = up_res_block(output, dim)
+
   elif slice_len == 32768:
     # Layer 4
-    # [4096, 128] -> [16384, 64]
+    # [4096, 256] -> [16384, 128]
     with tf.variable_scope('upconv_4'):
       output = up_res_block(output, dim)
-      output =    res_block(output, dim)
 
     # Layer 5
-    # [16384, 64] -> [32768, nch]
+    # [16384, 128] -> [32768, 64]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, nch, stride=2)
-      output =    res_block(output, nch)
-    output = tf.nn.tanh(output)
+      output = up_res_block(output, dim, stride=2)
+
   elif slice_len == 65536:
     # Layer 4
-    # [4096, 128] -> [16384, 64]
+    # [4096, 256] -> [16384, 128]
     with tf.variable_scope('upconv_4'):
       output = up_res_block(output, dim)
-      output =    res_block(output, dim)
 
     # Layer 5
-    # [16384, 64] -> [65536, nch]
+    # [16384, 128] -> [65536, 64]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, nch)
-      output =    res_block(output, nch)
+      output = up_res_block(output, dim)
+  
+  # To audio layer
+  # [16384, 64] -> [16384, nch]
+  with tf.variable_scope('to_audio'):
+    output = batchnorm(output)
+    output = tf.nn.relu(output)
+    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -370,7 +364,6 @@ def RWaveGANDiscriminator(
     nlabels=1):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
-  nch = x.shape[2]
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -381,66 +374,60 @@ def RWaveGANDiscriminator(
     phaseshuffle = lambda x: apply_phaseshuffle(x, phaseshuffle_rad)
   else:
     phaseshuffle = lambda x: x
-
-  def res_block(inputs, filters, activate_inputs=True):
-    return bottleneck_block(inputs, filters, kernel_len,
-                            normalization=batchnorm,
-                            activate_inputs=activate_inputs)
   
-  def down_res_block(inputs, filters, stride=4):
-    return bottleneck_block(inputs, filters, kernel_len,
-                            stride=stride,
-                            normalization=batchnorm,
-                            phaseshuffle=phaseshuffle)
+  def down_res_block(inputs, filters, stride=4, activate_inputs=True):
+    return residual_block(inputs, filters, kernel_len,
+                          stride=stride,
+                          normalization=batchnorm,
+                          phaseshuffle=phaseshuffle,
+                          activate_inputs=activate_inputs)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
-    return bottleneck_block(inputs, filters, kernel_len,
-                            stride=stride,
-                            normalization=batchnorm,
-                            phaseshuffle=lambda x: x)
+    return residual_block(inputs, filters, kernel_len,
+                          stride=stride,
+                          normalization=batchnorm,
+                          phaseshuffle=lambda x: x)
+
+  # From audio layer
+  # [16384, 64] -> [16384, nch]
+  output = x
+  with tf.variable_scope('from_audio'):
+    output = tf.layers.conv1d(output, dim, kernel_len, strides=1, padding='same')
 
   # Layer 0
   # [16384, 1] -> [4096, 64]
-  output = x
   with tf.variable_scope('downconv_0'):
-    output =      res_block(output, nch, activate_inputs=False)
     output = down_res_block(output, dim)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('downconv_1'):
-    output =      res_block(output, dim * 1)
     output = down_res_block(output, dim * 2)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('downconv_2'):
-    output =      res_block(output, dim * 2)
     output = down_res_block(output, dim * 4)
 
   # Layer 3
   # [256, 256] -> [64, 512]
   with tf.variable_scope('downconv_3'):
-    output =      res_block(output, dim * 4)
     output = down_res_block(output, dim * 8)
 
   # Layer 4
   # [64, 512] -> [16, 1024]
   with tf.variable_scope('downconv_4'):
-    output =      res_block(output, dim * 8)
     output = down_res_block(output, dim * 16)
 
   if slice_len == 32768:
     # Layer 5
     # [32, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
-      output =            res_block(output, dim * 16)
       output = down_res_block_no_ph(output, dim * 32, stride=2)
   elif slice_len == 65536:
     # Layer 5
     # [64, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
-      output =            res_block(output, dim * 16)
       output = down_res_block_no_ph(output, dim * 32)
   
   # Activate final layer
