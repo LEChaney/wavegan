@@ -245,16 +245,14 @@ def RWaveGANGenerator(
     batchnorm = lambda x: x
 
   def res_block(inputs, filters):
-    return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm,
-                          activation=tf.nn.relu)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            normalization=batchnorm)
   
   def up_res_block(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len, 
-                          stride=stride,
-                          upsample=upsample,
-                          normalization=batchnorm,
-                          activation=tf.nn.relu)
+    return bottleneck_block(inputs, filters, kernel_len, 
+                            stride=stride,
+                            upsample=upsample,
+                            normalization=batchnorm)
 
   # Conditioning input
   output = z
@@ -385,21 +383,21 @@ def RWaveGANDiscriminator(
     phaseshuffle = lambda x: x
 
   def res_block(inputs, filters, activate_inputs=True):
-    return residual_block(inputs, filters, kernel_len,
-                          normalization=batchnorm,
-                          activate_inputs=activate_inputs)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            normalization=batchnorm,
+                            activate_inputs=activate_inputs)
   
   def down_res_block(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=stride,
-                          normalization=batchnorm,
-                          phaseshuffle=phaseshuffle)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=stride,
+                            normalization=batchnorm,
+                            phaseshuffle=phaseshuffle)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=stride,
-                          normalization=batchnorm,
-                          phaseshuffle=lambda x: x)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=stride,
+                            normalization=batchnorm,
+                            phaseshuffle=lambda x: x)
 
   # Layer 0
   # [16384, 1] -> [4096, 64]
