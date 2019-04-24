@@ -209,7 +209,7 @@ def train(fps, args):
   # learning_rate = tf.train.exponential_decay(
   #   1e-5,
   #   tf.train.get_or_create_global_step(),
-  #   decay_steps=500,
+  #   decay_steps=1000,
   #   decay_rate=100,
   # )
   
@@ -260,11 +260,11 @@ def train(fps, args):
         learning_rate=5e-5)
   elif args.wavegan_loss == 'wgan-gp':
     G_opt = tf.train.AdamOptimizer(
-        learning_rate=2e-4,
+        learning_rate=5e-5,
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=2e-4,
+        learning_rate=5e-5,
         beta1=0.0,
         beta2=0.9)
   else:

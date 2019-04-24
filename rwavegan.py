@@ -83,20 +83,26 @@ def residual_block(inputs,
     # Default shortcut
     shortcut = inputs
 
-    # Resize shortcut to match output length
-    if is_upsampling:
-      shortcut = nn_upsample(shortcut, stride)
-    elif stride > 1:
+    # Downsample shortcut before resizing feature dimension (saves computation)
+    if stride > 1 and not is_upsampling:
       shortcut = avg_downsample(shortcut, stride)
     
-    # Project to match number of output features
-    if shortcut.shape[2] != filters:
-      with tf.variable_scope('proj_shortcut'):
-        shortcut = tf.layers.conv1d(shortcut, filters,
-                                    kernel_size=1,
-                                    strides=1,
-                                    padding='valid',
-                                    use_bias=False)
+    in_filters = shortcut.shape[2]
+    # Drop or concat to match number of output features
+    if in_filters < filters:
+      with tf.variable_scope('expand_shortcut'):
+        extra_features = tf.layers.conv1d(shortcut, filters - in_filters,
+                                          kernel_size=1,
+                                          strides=1,
+                                          padding='valid')
+        shortcut = tf.concat([shortcut, extra_features], 2)
+    elif in_filters > filters:
+      with tf.variable_scope('drop_shortcut'):
+        shortcut = shortcut[:, :, :filters]
+
+    # Upsample shortcut after resizing feature dimension (saves computation)
+    if stride > 1 and is_upsampling:
+      shortcut = nn_upsample(shortcut, stride)
 
     # Convolutions
     code = inputs
@@ -155,20 +161,26 @@ def bottleneck_block(inputs,
     # Default shortcut
     shortcut = inputs
 
-    # Resize shortcut to match output length
-    if is_upsampling:
-      shortcut = nn_upsample(shortcut, stride)
-    elif stride > 1:
+    # Downsample shortcut before resizing feature dimension (saves computation)
+    if stride > 1 and not is_upsampling:
       shortcut = avg_downsample(shortcut, stride)
     
-    # Project to match number of output features
-    if shortcut.shape[2] != filters:
-      with tf.variable_scope('proj_shortcut'):
-        shortcut = tf.layers.conv1d(shortcut, filters,
-                                    kernel_size=1,
-                                    strides=1,
-                                    padding='valid',
-                                    use_bias=False)
+    in_filters = shortcut.shape[2]
+    # Drop or concat to match number of output features
+    if in_filters < filters:
+      with tf.variable_scope('expand_shortcut'):
+        extra_features = tf.layers.conv1d(shortcut, filters - in_filters,
+                                          kernel_size=1,
+                                          strides=1,
+                                          padding='valid')
+        shortcut = tf.concat([shortcut, extra_features], 2)
+    elif in_filters > filters:
+      with tf.variable_scope('drop_shortcut'):
+        shortcut = shortcut[:, :, :filters]
+
+    # Upsample shortcut after resizing feature dimension (saves computation)
+    if stride > 1 and is_upsampling:
+      shortcut = nn_upsample(shortcut, stride)
     
     # Feature compression
     with tf.variable_scope('compress_f'):
