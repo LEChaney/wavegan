@@ -206,12 +206,12 @@ def train(fps, args):
   tf.summary.scalar('D_loss', D_loss)
 
 
-  learning_rate = tf.train.exponential_decay(
-    1e-5,
-    tf.train.get_or_create_global_step(),
-    decay_steps=1000,
-    decay_rate=100,
-  )
+  # learning_rate = tf.train.exponential_decay(
+  #   1e-5,
+  #   tf.train.get_or_create_global_step(),
+  #   decay_steps=1000,
+  #   decay_rate=100,
+  # )
   
   # Single cycle learning rate schedule
   # lower_bound = 1e-6
@@ -238,7 +238,7 @@ def train(fps, args):
   #       end_learning_rate=lower_bound,
   #       cycle=True)))
 
-  tf.summary.scalar('learning_rate', learning_rate)
+  # tf.summary.scalar('learning_rate', learning_rate)
 
   # Create (recommended) optimizer
   if args.wavegan_loss == 'dcgan':
@@ -260,11 +260,11 @@ def train(fps, args):
         learning_rate=5e-5)
   elif args.wavegan_loss == 'wgan-gp':
     G_opt = tf.train.AdamOptimizer(
-        learning_rate=learning_rate,
+        learning_rate=1e-4,
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=learning_rate,
+        learning_rate=1e-4,
         beta1=0.0,
         beta2=0.9)
   else:
