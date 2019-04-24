@@ -262,60 +262,61 @@ def RWaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
+  dim_mul //= 2
 
   # Layer 0
-  # [16, 1024] -> [64, 1024]
+  # [16, 1024] -> [64, 512]
   with tf.variable_scope('upconv_0'):
     output = up_res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 1
-  # [64, 1024] -> [256, 512]
+  # [64, 512] -> [256, 256]
   with tf.variable_scope('upconv_1'):
     output = up_res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 2
-  # [256, 512] -> [1024, 256]
+  # [256, 256] -> [1024, 128]
   with tf.variable_scope('upconv_2'):
     output = up_res_block(output, dim * dim_mul)
   dim_mul //= 2
 
   # Layer 3
-  # [1024, 256] -> [4096, 128]
+  # [1024, 128] -> [4096, 64]
   with tf.variable_scope('upconv_3'):
     output = up_res_block(output, dim * dim_mul)
 
   if slice_len == 16384:
     # Layer 4
+    # [4096, 64] -> [16384, 32]
+    with tf.variable_scope('upconv_4'):
+      output = up_res_block(output, dim // 2)
+
+  elif slice_len == 32768:
+    # Layer 4
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
       output = up_res_block(output, dim)
 
-  elif slice_len == 32768:
-    # Layer 4
-    # [4096, 256] -> [16384, 128]
-    with tf.variable_scope('upconv_4'):
-      output = up_res_block(output, dim)
-
     # Layer 5
-    # [16384, 128] -> [32768, 64]
+    # [16384, 64] -> [32768, 32]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, dim, stride=2)
+      output = up_res_block(output, dim // 2, stride=2)
 
   elif slice_len == 65536:
     # Layer 4
-    # [4096, 256] -> [16384, 128]
+    # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
       output = up_res_block(output, dim)
 
     # Layer 5
-    # [16384, 128] -> [65536, 64]
+    # [16384, 64] -> [65536, nch]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, dim)
-  
+      output = up_res_block(output, dim // 2)
+
   # To audio layer
-  # [16384, 64] -> [16384, nch]
+  # [16384, 32] -> [16384, nch]
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
     output = tf.nn.relu(output)
@@ -379,8 +380,7 @@ def RWaveGANDiscriminator(
     return residual_block(inputs, filters, kernel_len,
                           stride=stride,
                           normalization=batchnorm,
-                          phaseshuffle=phaseshuffle,
-                          activate_inputs=activate_inputs)
+                          phaseshuffle=phaseshuffle)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
@@ -389,13 +389,13 @@ def RWaveGANDiscriminator(
                           phaseshuffle=lambda x: x)
 
   # From audio layer
-  # [16384, 64] -> [16384, nch]
+  # [16384, nch] -> [16384, 32]
   output = x
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, dim // 2, kernel_len, strides=1, padding='same')
 
   # Layer 0
-  # [16384, 1] -> [4096, 64]
+  # [16384, 32] -> [4096, 64]
   with tf.variable_scope('downconv_0'):
     output = down_res_block(output, dim)
 
