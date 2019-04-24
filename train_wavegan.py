@@ -8,6 +8,7 @@ from functools import reduce
 import os
 import time
 
+import pandas as pd
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.training.summary_io import SummaryWriterCache
@@ -40,7 +41,14 @@ def train(fps, args):
         shuffle=True,
         shuffle_buffer_size=4096,
         prefetch_size=1,
-        prefetch_gpu_num=args.data_prefetch_gpu_num)[:, :, 0]
+        prefetch_gpu_num=args.data_prefetch_gpu_num,
+        extract_labels=args.use_conditioning,
+        vocab_dir=args.train_dir)
+    if args.use_conditioning:
+      x, y, vocab = x
+    else:
+      y = None
+    x = x[:, :, 0]
 
   # Make z vector
   z = tf.random_uniform([args.train_batch_size, args.wavegan_latent_dim], -1., 1., dtype=tf.float32)
@@ -55,10 +63,15 @@ def train(fps, args):
   
   # Make generator
   with tf.variable_scope('G'):
+    # Create label embedding
+    if args.use_conditioning:
+      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
+      yembed = tf.nn.embedding_lookup(embedding_table, y)
+
     if args.use_progressive_growing:
-      G_z = PWaveGANGenerator(z, lod, train=True, **args.wavegan_g_kwargs)
+      G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
     else:
-      G_z = build_generator(z, train=True, **args.wavegan_g_kwargs)
+      G_z = build_generator(z, yembed=yembed, train=True, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -76,6 +89,8 @@ def train(fps, args):
   print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
 
   # Summarize
+  tf_vocab = tf.constant(list(vocab.index), name='vocab')
+  tf.summary.text('labels', tf.gather(tf_vocab, y))
   tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
   tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
   G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
@@ -88,9 +103,9 @@ def train(fps, args):
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
     if args.use_progressive_growing:
-      D_x = PWaveGANDiscriminator(x, lod, **args.wavegan_d_kwargs)
+      D_x = PWaveGANDiscriminator(x, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_x = build_discriminator(x, **args.wavegan_d_kwargs)
+      D_x = build_discriminator(x, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -108,9 +123,9 @@ def train(fps, args):
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
     if args.use_progressive_growing:
-      D_G_z = PWaveGANDiscriminator(G_z, lod, **args.wavegan_d_kwargs)
+      D_G_z = PWaveGANDiscriminator(G_z, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_G_z = build_discriminator(G_z, **args.wavegan_d_kwargs)
+      D_G_z = build_discriminator(G_z, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
@@ -162,19 +177,19 @@ def train(fps, args):
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
       if args.use_progressive_growing:
-        D_interp = PWaveGANDiscriminator(interpolates, lod, **args.wavegan_d_kwargs)
+        D_interp = PWaveGANDiscriminator(interpolates, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
       else:
-        D_interp = build_discriminator(interpolates, **args.wavegan_d_kwargs)
+        D_interp = build_discriminator(interpolates, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
 
     LAMBDA = 10
     gradients = tf.gradients(D_interp, [interpolates])[0]
     # gradients = tf.gradients(D_x, [x])[0]
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
-    gradient_penalty = tf.reduce_mean((slopes - 1) ** 2.)
+    gradient_penalty = tf.reduce_mean((slopes) ** 2.)
     D_loss += LAMBDA * gradient_penalty
   else:
     raise NotImplementedError()
-
+ 
   # Diversity Regularization
   # audio_diff = G_z[:args.train_batch_size // 2] - G_z[args.train_batch_size // 2:]
   # z_diff = z[:args.train_batch_size // 2] - z[args.train_batch_size // 2:]
@@ -189,6 +204,41 @@ def train(fps, args):
     tf.summary.scalar('Gradient Penalty', gradient_penalty)
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
+
+
+  # learning_rate = tf.train.exponential_decay(
+  #   2e-6,
+  #   tf.train.get_or_create_global_step(),
+  #   decay_steps=1000,
+  #   decay_rate=100,
+  # )
+  
+  # Single cycle learning rate schedule
+  # lower_bound = 5e-6
+  # upper_bound = 5e-5
+  # final_lr = 1e-6
+  # cycle = 30000
+  # half_cycle = cycle // 2
+  # learning_rate = tf.cond(tf.train.get_or_create_global_step() > cycle, 
+  #   # Final learning rate reached for single cycle schedule
+  #   lambda: final_lr,
+  #   lambda: tf.cond(tf.equal(tf.mod(tf.floor(tf.train.get_or_create_global_step() / half_cycle), 2), 0),
+  #     # Increasing learning rate till half way through cycle
+  #     lambda: tf.train.polynomial_decay(
+  #       lower_bound,
+  #       tf.train.get_or_create_global_step(),
+  #       half_cycle,
+  #       end_learning_rate=upper_bound,
+  #       cycle=True),
+  #     # Decreasing learning rate from half way till end of cycle
+  #     lambda: tf.train.polynomial_decay(
+  #       upper_bound,
+  #       tf.train.get_or_create_global_step(),
+  #       half_cycle,
+  #       end_learning_rate=lower_bound,
+  #       cycle=True)))
+
+  # tf.summary.scalar('learning_rate', learning_rate)
 
   # Create (recommended) optimizer
   if args.wavegan_loss == 'dcgan':
@@ -210,12 +260,12 @@ def train(fps, args):
         learning_rate=5e-5)
   elif args.wavegan_loss == 'wgan-gp':
     G_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
-        beta1=0.5,
+        learning_rate=3e-5,
+        beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
-        beta1=0.5,
+        learning_rate=3e-5,
+        beta1=0.0,
         beta2=0.9)
   else:
     raise NotImplementedError()
@@ -342,17 +392,25 @@ def infer(args):
   flat_pad = tf.placeholder(tf.int32, [], name='flat_pad')
 
   if args.use_progressive_growing:
-    lod = tf.placeholder(tf.float32, shape=[])
+    lod = tf.placeholder(tf.float32, shape=[], name='lod')
 
   # Select model
   build_generator = RWaveGANGenerator if args.use_resnet else WaveGANGenerator
 
+  yembed = None
+  if args.use_conditioning:
+    yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
+
   # Execute generator
   with tf.variable_scope('G'):
+    if args.use_conditioning:
+      vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
+      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
+
     if args.use_progressive_growing:
-      G_z = PWaveGANGenerator(z, lod, train=False, **args.wavegan_g_kwargs)
+      G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=False, **args.wavegan_g_kwargs)
     else:
-      G_z = build_generator(z, train=False, **args.wavegan_g_kwargs)
+      G_z = build_generator(z, yembed=yembed, train=False, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -523,6 +581,21 @@ def incept(args):
   gan_z = gan_graph.get_tensor_by_name('z:0')
   gan_G_z = gan_graph.get_tensor_by_name('G_z:0')[:, :, 0]
   gan_step = gan_graph.get_tensor_by_name('global_step:0')
+  gan_embed_table = gan_graph.get_tensor_by_name('G/embed_table:0')
+  gan_yembed = gan_graph.get_tensor_by_name('yembed:0')
+
+  # Load vocab
+  if args.use_conditioning:
+    vocab_fp = os.path.join(args.train_dir, 'vocab.csv')
+    vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True).astype(np.int32)
+    print('Loaded vocab file: {}'.format(vocab_fp))
+    print(vocab)
+
+    # Get random label from vocab
+    ys = []
+    for _ in range(args.incept_n):
+      y = np.random.randint(len(vocab))
+      ys.append(y)
 
   # Load or generate latents
   z_fp = os.path.join(incept_dir, 'z.pkl')
@@ -574,7 +647,13 @@ def incept(args):
 
       _G_zs = []
       for i in xrange(0, args.incept_n, 100):
-        _G_zs.append(sess.run(gan_G_z, {gan_z: _zs[i:i+100]}))
+        if args.use_conditioning:
+          # Embed label id for generator
+          yembed = tf.nn.embedding_lookup(gan_embed_table, ys[i:i+100])
+          _yembed = sess.run(yembed)
+          _G_zs.append(sess.run(gan_G_z, {gan_z: _zs[i:i+100], gan_yembed: _yembed}))
+        else:
+          _G_zs.append(sess.run(gan_G_z, {gan_z: _zs[i:i+100]}))
       _G_zs = np.concatenate(_G_zs, axis=0)
 
       _preds = []
@@ -672,6 +751,10 @@ if __name__ == '__main__':
       help='Enable progressive growing of WaveGAN')
   wavegan_args.add_argument('--use_resnet', action='store_true', dest='use_resnet',
       help='Use Resnet version of WaveGAN')
+  wavegan_args.add_argument('--use_conditioning', action='store_true', dest='use_conditioning',
+      help='Condition the GAN on audio labels extracted from filename')
+  wavegan_args.add_argument('--embedding_dim', type=int,
+      help='Number of dimensions for the label embeddings')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -725,7 +808,9 @@ if __name__ == '__main__':
     incept_n=5000,
     incept_k=10,
     use_progressive_growing=False,
-    use_resnet=False)
+    use_resnet=False,
+    use_conditioning=False,
+    embedding_dim=100)
 
   args = parser.parse_args()
 

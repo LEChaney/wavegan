@@ -48,7 +48,8 @@ def WaveGANGenerator(
     dim=64,
     use_batchnorm=False,
     upsample='zeros',
-    train=False):
+    train=False,
+    yembed=None):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -57,10 +58,14 @@ def WaveGANGenerator(
   else:
     batchnorm = lambda x: x
 
+  # Conditioning input
+  output = z
+  if yembed is not None:
+    output = tf.concat([z, yembed], 1)
+
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   dim_mul = 16 if slice_len == 16384 else 32
-  output = z
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
@@ -173,7 +178,9 @@ def WaveGANDiscriminator(
     kernel_len=25,
     dim=64,
     use_batchnorm=False,
-    phaseshuffle_rad=0):
+    phaseshuffle_rad=0,
+    labels=None,
+    nlabels=1):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
 
@@ -246,7 +253,12 @@ def WaveGANDiscriminator(
 
   # Connect to single logit
   with tf.variable_scope('output'):
-    output = tf.layers.dense(output, 1)[:, 0]
+    if labels is not None:
+      output = tf.layers.dense(output, nlabels)
+      indices = tf.range(tf.shape(output)[0])
+      output = tf.gather_nd(output, tf.stack([indices, labels], -1))
+    else:
+      output = tf.layers.dense(output, 1)[:, 0]
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 

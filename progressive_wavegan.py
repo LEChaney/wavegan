@@ -296,7 +296,8 @@ def PWaveGANGenerator(
     dim=64,
     use_batchnorm=False,
     upsample='zeros',
-    train=False):
+    train=False,
+    embedding=None):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -480,7 +481,9 @@ def PWaveGANDiscriminator(
     kernel_len=25,
     dim=64,
     use_batchnorm=False,
-    phaseshuffle_rad=0):
+    phaseshuffle_rad=0,
+    labels=False,
+    nlabels=1):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
 

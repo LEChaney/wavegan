@@ -1,5 +1,8 @@
 from scipy.io.wavfile import read as wavread
 import numpy as np
+import os
+import glob
+import pandas as pd
 
 import tensorflow as tf
 
@@ -65,6 +68,37 @@ def decode_audio(fp, fs=None, num_channels=1, normalize=False, fast_wav=False):
   return _wav
 
 
+def create_or_load_vocab_and_label_ids(fps, vocab_dir):
+  '''
+  Args
+    fps: Either a directory of list of files that will be used to construct labels
+    vocab_dir: Directory to save / restore the vocab from
+  '''
+  if isinstance(fps, str) and os.path.isdir(fps):
+    print('Creating labels from files in director: {}'.format(fps))
+    fps = glob.glob(os.path.join(fps, '**/*.wav'), recursive=True)
+
+  # Extract basic label from filename.
+  # Uses first word, separated by underscores or spaces
+  labels = []
+  for fp in fps:
+    labels.append(os.path.basename(fp).split('.')[0].split(' ')[0].split('_')[0])
+  
+  # Build and save the vocabulary or load the vocabulary from file
+  vocab_fp = os.path.join(vocab_dir, 'vocab.csv')
+  if os.path.isfile(vocab_fp):
+    vocab = pd.read_csv(vocab_fp, header=None, index_col=0, squeeze=True).astype(np.int32)
+  else:
+    vocab = set(labels)
+    vocab = pd.Series(range(len(vocab)), index=vocab, dtype=np.int32)
+    vocab.to_csv(vocab_fp, header=None)
+
+  # Extract integer label ids for each audio file
+  label_ids = vocab.loc[labels].values
+
+  return vocab, label_ids
+
+
 def decode_extract_and_batch(
     fps,
     batch_size,
@@ -82,7 +116,9 @@ def decode_extract_and_batch(
     shuffle=False,
     shuffle_buffer_size=None,
     prefetch_size=None,
-    prefetch_gpu_num=None):
+    prefetch_gpu_num=None,
+    extract_labels=False,
+    vocab_dir='train'):
   """Decodes audio file paths into mini-batches of samples.
 
   Args:
@@ -103,13 +139,28 @@ def decode_extract_and_batch(
     shuffle_buffer_size: Number of examples to queue up before grabbing a batch.
     prefetch_size: Number of examples to prefetch from the queue.
     prefetch_gpu_num: If specified, prefetch examples to GPU.
+    extract_labels: If specified, labels and vocab are returned by the loader for each audio file.
+    vocab_dir: The directory the vocabulary file will saved to / loaded from in case training restarts.
 
   Returns:
     A tuple of np.float32 tensors representing audio waveforms.
       audio: [batch_size, slice_len, 1, nch]
+    Additionally, if extract_labels is specified, then the loader will 
+    return a labels for each audio file in the batch as well as the vocabulary set
+      label: [batch_size] dtype: int64
+      vocab: Pandas Series containing map from label texts to integer label ids and vice versa
   """
+
   # Create dataset of filepaths
   dataset = tf.data.Dataset.from_tensor_slices(fps)
+
+  # Extract audio labels
+  if extract_labels:
+    vocab, label_ids = create_or_load_vocab_and_label_ids(fps, vocab_dir)
+
+    # Add label ids to dataset
+    label_ids_dataset = tf.data.Dataset.from_tensor_slices(label_ids)
+    dataset = tf.data.Dataset.zip((dataset, label_ids_dataset))
 
   # Shuffle all filepaths every epoch
   if shuffle:
@@ -119,7 +170,7 @@ def decode_extract_and_batch(
   if repeat:
     dataset = dataset.repeat()
 
-  def _decode_audio_shaped(fp):
+  def _decode_audio_shaped(fp, *argv):
     _decode_audio_closure = lambda _fp: decode_audio(
       _fp,
       fs=decode_fs,
@@ -134,7 +185,7 @@ def decode_extract_and_batch(
         stateful=False)
     audio.set_shape([None, 1, decode_num_channels])
 
-    return audio
+    return (audio, *argv)
 
   # Decode audio
   dataset = dataset.map(
@@ -170,9 +221,14 @@ def decode_extract_and_batch(
 
     return audio_slices
 
-  def _slice_dataset_wrapper(audio):
+  def _slice_dataset_wrapper(audio, *argv):
     audio_slices = _slice(audio)
-    return tf.data.Dataset.from_tensor_slices(audio_slices)
+    out_dataset = tf.data.Dataset.from_tensor_slices(audio_slices)
+    if len(argv) > 0:
+      label_id = argv[0]
+      label_id_dataset = tf.data.Dataset.from_tensors(label_id)
+      out_dataset = tf.data.Dataset.zip((out_dataset, label_id_dataset))
+    return out_dataset
 
   # Extract parallel sliceuences from both audio and features
   dataset = dataset.flat_map(_slice_dataset_wrapper)
@@ -195,4 +251,8 @@ def decode_extract_and_batch(
   # Get tensors
   iterator = dataset.make_one_shot_iterator()
   
-  return iterator.get_next()
+  if extract_labels:
+    x, y = iterator.get_next()
+    return x, y, vocab
+  else:
+    return iterator.get_next()
