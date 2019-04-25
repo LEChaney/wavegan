@@ -320,14 +320,8 @@ def RWaveGANGenerator(
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
     output = tf.nn.relu(output)
-    signal = tf.zeros([tf.shape(output)[0], tf.shape(output)[1], nch])
-    groups = 8
-    for i in range(groups):
-      with tf.variable_scope('group_conv_{}'.format(i)):
-        group_size = output.shape[2] // groups
-        group_conv = tf.layers.conv1d(output[:, :, i*group_size:(i+1)*group_size], nch, kernel_len, strides=1, padding='same')
-        signal += tf.nn.tanh(group_conv)
-    output = signal
+    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
+    output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
@@ -398,15 +392,7 @@ def RWaveGANDiscriminator(
   # [16384, nch] -> [16384, 32]
   output = x
   with tf.variable_scope('from_audio'):
-    groups = 8
-    for i in range(groups):
-      with tf.variable_scope('group_conv_{}'.format(i)):
-        group_size = (dim // 2) // groups
-        group_conv = tf.layers.conv1d(x, group_size, kernel_len, strides=1, padding='same')
-        if i == 0:
-          output = group_conv
-        else:
-          output = tf.concat([output, group_conv], 2)
+    output = tf.layers.conv1d(output, dim // 2, kernel_len, strides=1, padding='same')
 
   # Layer 0
   # [16384, 32] -> [4096, 64]
