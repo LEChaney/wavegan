@@ -1,8 +1,8 @@
 import tensorflow as tf
 import math
 
-def round_up_to_multiple(f, divisor=2):
-    return int(math.ceil(f / divisor) * divisor)
+def round_down_to_multiple(f, divisor=2):
+    return int(math.floor(f / divisor) * divisor)
 
 
 def lrelu(inputs, alpha=0.2):
@@ -82,7 +82,7 @@ def residual_block(inputs,
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
     in_filters = inputs.shape.as_list()[2]
-    out_filters =  round_up_to_multiple(filters * math.sqrt(2))
+    out_filters =  round_down_to_multiple(filters * math.sqrt(2))
     internal_filters = min(out_filters, in_filters)
 
     # Default shortcut
@@ -263,8 +263,8 @@ def RWaveGANGenerator(
   # [100] -> [16, 1024]
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    out_features = round_up_to_multiple(4 * 4 * dim * dim_mul * math.sqrt(2), 16)
-    out_features = round_up_to_multiple(out_features // 16, 2) * 16
+    out_features = round_down_to_multiple(4 * 4 * dim * dim_mul * math.sqrt(2), 16)
+    out_features = round_down_to_multiple(out_features // 16, 2) * 16
     output = tf.layers.dense(output, out_features)
     output = tf.reshape(output, [batch_size, 16, out_features // 16])
   dim_mul //= 2
