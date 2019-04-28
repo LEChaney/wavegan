@@ -2,8 +2,8 @@ import tensorflow as tf
 import math
 
 
-def round_down_to_multiple(x, divisor):
-  return math.floor(x/divisor)*divisor
+def round_to_nearest_multiple(x, divisor):
+  return round(x/divisor)*divisor
 
 
 def lrelu(inputs, alpha=0.2):
@@ -254,7 +254,7 @@ def RWaveGANGenerator(
     activation = maxout
     # Because we are halving the output size of every activation.
     # This should bring the model back to the same total number of parameters.
-    dim = round_down_to_multiple(dim * math.sqrt(2), 4)
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
   else:
     activation = lrelu
 
@@ -390,7 +390,7 @@ def RWaveGANDiscriminator(
     activation = maxout
     # Because we are halving the output size of every activation.
     # This should bring the model back to the same total number of parameters.
-    dim = round_down_to_multiple(dim * math.sqrt(2), 4)
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
   else:
     activation = lrelu
 
