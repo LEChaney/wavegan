@@ -256,7 +256,7 @@ def RWaveGANGenerator(
     # This should bring the model back to the same total number of parameters.
     dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
   else:
-    activation = lrelu
+    activation = tf.nn.relu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
