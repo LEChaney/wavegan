@@ -2,8 +2,8 @@ import tensorflow as tf
 import math
 
 
-def round_to_nearest_multiple(x, divisor):
-  return round(x/divisor)*divisor
+def round_down_to_multiple(x, divisor):
+  return math.floor(x/divisor)*divisor
 
 
 def lerp_clip(a, b, t): 
@@ -315,7 +315,7 @@ def PWaveGANGenerator(
     activation = maxout
     # Because we are halving the output size of every activation.
     # This should bring the model back to the same total number of parameters.
-    dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
+    dim = round_down_to_multiple(dim * math.sqrt(2), 2)
   else:
     activation = tf.nn.relu
 
@@ -510,7 +510,7 @@ def PWaveGANDiscriminator(
     activation = maxout
     # Because we are halving the output size of every activation.
     # This should bring the model back to the same total number of parameters.
-    dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
+    dim = round_down_to_multiple(dim * math.sqrt(2), 2)
   else:
     activation = lrelu
 
