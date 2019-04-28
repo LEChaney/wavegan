@@ -1,12 +1,17 @@
 import tensorflow as tf
 import math
 
-def round_down_to_multiple(f, divisor=2):
-    return int(math.floor(f / divisor) * divisor)
+
+def round_to_nearest_multiple(x, divisor):
+  return round(x/divisor)*divisor
 
 
 def lrelu(inputs, alpha=0.2):
   return tf.maximum(alpha * inputs, inputs)
+
+
+def maxout(inputs):
+  return tf.contrib.layers.maxout(inputs, inputs.shape.as_list()[-1] // 2)
 
 
 def nn_upsample(inputs, stride=4):
@@ -66,6 +71,7 @@ def residual_block(inputs,
                    stride=1, 
                    upsample=None, 
                    activate_inputs=True,
+                   activation=lrelu,
                    normalization=lambda x: x,
                    phaseshuffle=lambda x: x):
   '''
@@ -81,9 +87,9 @@ def residual_block(inputs,
   '''
   with tf.variable_scope(None, 'res_block'):
     is_upsampling = (upsample == 'zeros' or upsample == 'nn')
-    in_filters = inputs.shape.as_list()[2]
-    out_filters =  round_down_to_multiple(filters * math.sqrt(2))
-    internal_filters = min(out_filters, in_filters)
+    in_features = inputs.shape.as_list()[2]
+    out_features =  filters
+    internal_filters = min(out_features, in_features)
 
     # Default shortcut
     shortcut = inputs
@@ -93,16 +99,16 @@ def residual_block(inputs,
       shortcut = avg_downsample(shortcut, stride)
     
     # Drop or concat to match number of output features
-    if in_filters < out_filters:
+    if in_features < out_features:
       with tf.variable_scope('expand_shortcut'):
-        extra_features = tf.layers.conv1d(shortcut, out_filters - in_filters,
+        extra_features = tf.layers.conv1d(shortcut, out_features - in_features,
                                           kernel_size=1,
                                           strides=1,
                                           padding='valid')
         shortcut = tf.concat([shortcut, extra_features], 2)
-    elif in_filters > out_filters:
+    elif in_features > out_features:
       with tf.variable_scope('drop_shortcut'):
-        shortcut = shortcut[:, :, :out_filters]
+        shortcut = shortcut[:, :, :out_features]
 
     # Upsample shortcut after resizing feature dimension (saves computation)
     if stride > 1 and is_upsampling:
@@ -113,7 +119,7 @@ def residual_block(inputs,
     with tf.variable_scope('conv_0'):
       if activate_inputs:
         code = normalization(code)
-        code = tf.contrib.layers.maxout(code, int(in_filters // 2))  # Pre-Activation
+        code = activation(code)  # Pre-Activation
         code = phaseshuffle(code)
       if is_upsampling:
         code = conv1d_transpose(code, internal_filters, kernel_size, strides=stride, padding='same')
@@ -122,12 +128,12 @@ def residual_block(inputs,
 
     with tf.variable_scope('conv_1'):
       code = normalization(code)
-      code = tf.contrib.layers.maxout(code, int(internal_filters // 2))  # Pre-Activation
+      code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
       if is_upsampling:
-        code = tf.layers.conv1d(code, out_filters, kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, out_features, kernel_size, strides=1, padding='same')
       else:
-        code = tf.layers.conv1d(code, out_filters, kernel_size, strides=stride, padding='same')
+        code = tf.layers.conv1d(code, out_features, kernel_size, strides=stride, padding='same')
 
     # Add shortcut connection
     code = shortcut + code
@@ -169,16 +175,16 @@ def bottleneck_block(inputs,
     if stride > 1 and not is_upsampling:
       shortcut = avg_downsample(shortcut, stride)
     
-    in_filters = shortcut.shape[2]
+    in_features = shortcut.shape[2]
     # Drop or concat to match number of output features
-    if in_filters < filters:
+    if in_features < filters:
       with tf.variable_scope('expand_shortcut'):
-        extra_features = tf.layers.conv1d(shortcut, filters - in_filters,
+        extra_features = tf.layers.conv1d(shortcut, filters - in_features,
                                           kernel_size=1,
                                           strides=1,
                                           padding='valid')
         shortcut = tf.concat([shortcut, extra_features], 2)
-    elif in_filters > filters:
+    elif in_features > filters:
       with tf.variable_scope('drop_shortcut'):
         shortcut = shortcut[:, :, :filters]
 
@@ -239,9 +245,18 @@ def RWaveGANGenerator(
     use_batchnorm=False,
     upsample='zeros',
     train=False,
-    yembed=None):
+    yembed=None,
+    use_maxout=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
+
+  if use_maxout:
+    activation = maxout
+    # Because we are halving the output size of every activation.
+    # This should bring the model back to the same total number of parameters.
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
+  else:
+    activation = lrelu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
@@ -252,7 +267,8 @@ def RWaveGANGenerator(
     return residual_block(inputs, filters, kernel_len, 
                           stride=stride,
                           upsample=upsample,
-                          normalization=batchnorm)
+                          normalization=batchnorm,
+                          activation=activation)
 
   # Conditioning input
   output = z
@@ -263,10 +279,8 @@ def RWaveGANGenerator(
   # [100] -> [16, 1024]
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    out_features = round_down_to_multiple(4 * 4 * dim * dim_mul * math.sqrt(2), 16)
-    out_features = round_down_to_multiple(out_features // 16, 2) * 16
-    output = tf.layers.dense(output, out_features)
-    output = tf.reshape(output, [batch_size, 16, out_features // 16])
+    output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
+    output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
   dim_mul //= 2
 
   # Layer 0
@@ -324,7 +338,7 @@ def RWaveGANGenerator(
   # [16384, 32] -> [16384, nch]
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
     output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
     output = tf.nn.tanh(output)
 
@@ -367,9 +381,18 @@ def RWaveGANDiscriminator(
     use_batchnorm=False,
     phaseshuffle_rad=0,
     labels=None,
-    nlabels=1):
+    nlabels=1,
+    use_maxout=False):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
+
+  if use_maxout:
+    activation = maxout
+    # Because we are halving the output size of every activation.
+    # This should bring the model back to the same total number of parameters.
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
+  else:
+    activation = lrelu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -385,13 +408,15 @@ def RWaveGANDiscriminator(
     return residual_block(inputs, filters, kernel_len,
                           stride=stride,
                           normalization=batchnorm,
-                          phaseshuffle=phaseshuffle)
+                          phaseshuffle=phaseshuffle,
+                          activation=activation)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
                           stride=stride,
                           normalization=batchnorm,
-                          phaseshuffle=lambda x: x)
+                          phaseshuffle=lambda x: x,
+                          activation=activation)
 
   # From audio layer
   # [16384, nch] -> [16384, 32]
@@ -437,7 +462,7 @@ def RWaveGANDiscriminator(
   
   # Activate final layer
   output = batchnorm(output)
-  output = tf.contrib.layers.maxout(output, int(output.shape.as_list()[2] // 2))
+  output = activation(output)
 
   # Flatten
   output = tf.reshape(output, [batch_size, -1])

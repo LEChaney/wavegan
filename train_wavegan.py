@@ -755,6 +755,8 @@ if __name__ == '__main__':
       help='Condition the GAN on audio labels extracted from filename')
   wavegan_args.add_argument('--embedding_dim', type=int,
       help='Number of dimensions for the label embeddings')
+  wavegan_args.add_argument('--use_maxout', action='store_true', dest='use_maxout',
+      help='Use maxout activation instead of relu / leaky relu')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -810,7 +812,8 @@ if __name__ == '__main__':
     use_progressive_growing=False,
     use_resnet=False,
     use_conditioning=False,
-    embedding_dim=100)
+    embedding_dim=100,
+    use_maxout=False)
 
   args = parser.parse_args()
 
@@ -829,13 +832,15 @@ if __name__ == '__main__':
     'kernel_len': args.wavegan_kernel_len,
     'dim': args.wavegan_dim,
     'use_batchnorm': args.wavegan_batchnorm,
-    'upsample': args.wavegan_genr_upsample
+    'upsample': args.wavegan_genr_upsample,
+    'use_maxout': args.use_maxout
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
     'dim': args.wavegan_dim,
     'use_batchnorm': args.wavegan_batchnorm,
-    'phaseshuffle_rad': args.wavegan_disc_phaseshuffle
+    'phaseshuffle_rad': args.wavegan_disc_phaseshuffle,
+    'use_maxout': args.use_maxout
   })
 
   if args.mode == 'train':

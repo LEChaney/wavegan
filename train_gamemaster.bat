@@ -1,6 +1,7 @@
 python train_wavegan.py train .\train_gamemaster ^
 --data_dir .\data\Gamemaster_Audio_16KHz ^
 --use_resnet ^
+--use_maxout ^
 --use_conditioning ^
 --data_first_slice ^
 --data_fast_wav ^

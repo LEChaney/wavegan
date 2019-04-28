@@ -1,6 +1,7 @@
 python train_wavegan.py train .\train_sc09 ^
 --data_dir .\data\sc09\train ^
 --use_resnet ^
+--use_maxout ^
 --use_conditioning ^
 --data_first_slice ^
 --data_fast_wav ^

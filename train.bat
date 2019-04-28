@@ -1,6 +1,7 @@
 python train_wavegan.py train .\train_swordfighter ^
 --data_dir .\data\Sword_Fighter_16bit ^
 --use_resnet ^
+--use_maxout ^
 --data_first_slice ^
 --data_fast_wav ^
 --data_num_channels 2 ^

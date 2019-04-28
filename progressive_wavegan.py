@@ -1,8 +1,17 @@
 import tensorflow as tf
+import math
+
+
+def round_to_nearest_multiple(x, divisor):
+  return round(x/divisor)*divisor
 
 
 def lerp_clip(a, b, t): 
   return a + (b - a) * tf.clip_by_value(t, 0.0, 1.0)
+
+
+def maxout(inputs):
+  return tf.contrib.layers.maxout(inputs, inputs.shape.as_list()[-1] // 2)
 
 
 def lrelu(inputs, alpha=0.2):
@@ -297,9 +306,18 @@ def PWaveGANGenerator(
     use_batchnorm=False,
     upsample='zeros',
     train=False,
-    embedding=None):
+    embedding=None,
+    use_maxout=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
+
+  if use_maxout:
+    activation = maxout
+    # Because we are halving the output size of every activation.
+    # This should bring the model back to the same total number of parameters.
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
+  else:
+    activation = tf.nn.relu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
@@ -314,7 +332,7 @@ def PWaveGANGenerator(
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
   dim_mul //= 2
 
   # First layer only needs audio input while it skipping or transitioning.
@@ -338,7 +356,7 @@ def PWaveGANGenerator(
     on_amount = lod  # on at LOD 1
     output, audio_lod = up_block(output, audio_lod, on_amount, dim * dim_mul, kernel_len, 4, upsample=upsample)
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
     dim_mul //= 2
 
     # Summary for LOD level
@@ -351,7 +369,7 @@ def PWaveGANGenerator(
     on_amount = lod - 1  # on at LOD 2
     output, audio_lod = up_block(output, audio_lod, on_amount, dim * dim_mul, kernel_len, 4, upsample=upsample)
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
     dim_mul //= 2
 
     # Summary for LOD level
@@ -364,7 +382,7 @@ def PWaveGANGenerator(
     on_amount = lod - 2  # on at LOD 3
     output, audio_lod = up_block(output, audio_lod, on_amount, dim * dim_mul, kernel_len, 4, upsample=upsample)
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
     dim_mul //= 2
 
     # Summary for LOD level
@@ -377,7 +395,7 @@ def PWaveGANGenerator(
     on_amount = lod - 3  # on at LOD 4
     output, audio_lod = up_block(output, audio_lod, on_amount, dim * dim_mul, kernel_len, 4, upsample=upsample)
     output = batchnorm(output)
-    output = tf.nn.relu(output)
+    output = activation(output)
 
     # Summary for LOD level
     tf.summary.scalar('on_amount', on_amount)
@@ -402,7 +420,7 @@ def PWaveGANGenerator(
       on_amount = lod - 4  # on at LOD 5
       output, audio_lod = up_block(output, audio_lod, on_amount, dim, kernel_len, 4, upsample=upsample)
       output = batchnorm(output)
-      output = tf.nn.relu(output)
+      output = activation(output)
 
       # Summary for LOD level
       tf.summary.scalar('on_amount', on_amount)
@@ -426,7 +444,7 @@ def PWaveGANGenerator(
       on_amount = lod - 4  # on at LOD 5
       output, audio_lod = up_block(output, audio_lod, on_amount, dim, kernel_len, 4, upsample=upsample)
       output = batchnorm(output)
-      output = tf.nn.relu(output)
+      output = activation(output)
 
       # Summary for LOD level
       tf.summary.scalar('on_amount', on_amount)
@@ -483,9 +501,18 @@ def PWaveGANDiscriminator(
     use_batchnorm=False,
     phaseshuffle_rad=0,
     labels=False,
-    nlabels=1):
+    nlabels=1,
+    use_maxout=False):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
+
+  if use_maxout:
+    activation = maxout
+    # Because we are halving the output size of every activation.
+    # This should bring the model back to the same total number of parameters.
+    dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
+  else:
+    activation = lrelu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
@@ -516,7 +543,7 @@ def PWaveGANDiscriminator(
   with tf.variable_scope('downconv_0'):
     on_amount = lod - 5  # On at LOD 6, or 5 for 1 second audio
     output, audio_lod = down_block(output, x, on_amount, dim, kernel_len, 4)
-    output = lrelu(output)
+    output = activation(output)
     output = phaseshuffle(output)
 
     # Summary for LOD level
@@ -530,7 +557,7 @@ def PWaveGANDiscriminator(
     on_amount = lod - 4  # On at LOD 5, or 4 for 1 second audio
     output, audio_lod = down_block(output, audio_lod, on_amount, dim * 2, kernel_len, 4)
     output = batchnorm(output)
-    output = lrelu(output)
+    output = activation(output)
     output = phaseshuffle(output)
 
     # Summary for LOD level
@@ -544,7 +571,7 @@ def PWaveGANDiscriminator(
     on_amount = lod - 3  # On at LOD 4, or 3 for 1 second audio
     output, audio_lod = down_block(output, audio_lod, on_amount, dim * 4, kernel_len, 4)
     output = batchnorm(output)
-    output = lrelu(output)
+    output = activation(output)
     output = phaseshuffle(output)
 
     # Summary for LOD level
@@ -558,7 +585,7 @@ def PWaveGANDiscriminator(
     on_amount = lod - 2  # On at LOD 3, or 2 for 1 second audio
     output, audio_lod = down_block(output, audio_lod, on_amount, dim * 8, kernel_len, 4)
     output = batchnorm(output)
-    output = lrelu(output)
+    output = activation(output)
     output = phaseshuffle(output)
 
     # Summary for LOD level
@@ -572,7 +599,7 @@ def PWaveGANDiscriminator(
     on_amount = lod - 1  # On at LOD 2, or 1 for 1 second audio
     output, audio_lod = down_block(output, audio_lod, on_amount, dim * 16, kernel_len, 4, last_block=(slice_len == 16384))
     output = batchnorm(output)
-    output = lrelu(output)
+    output = activation(output)
 
     # Summary for LOD level
     if 'D_x/' in tf.get_default_graph().get_name_scope():
@@ -586,7 +613,7 @@ def PWaveGANDiscriminator(
       on_amount = lod  # On at LOD 1
       output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 2, last_block=True)
       output = batchnorm(output)
-      output = lrelu(output)
+      output = activation(output)
 
       # Summary for LOD level
       if 'D_x/' in tf.get_default_graph().get_name_scope():
@@ -600,7 +627,7 @@ def PWaveGANDiscriminator(
       on_amount = lod  # On at LOD 1
       output, audio_lod = down_block(output, audio_lod, on_amount, dim * 32, kernel_len, 4, last_block=True)
       output = batchnorm(output)
-      output = lrelu(output)
+      output = activation(output)
 
       # Summary for LOD level
       if 'D_x/' in tf.get_default_graph().get_name_scope():
