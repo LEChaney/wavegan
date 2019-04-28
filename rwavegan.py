@@ -338,7 +338,7 @@ def RWaveGANGenerator(
   # [16384, 32] -> [16384, nch]
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
-    output = activation(output)
+    output = tf.nn.relu(output)
     output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
     output = tf.nn.tanh(output)
 
