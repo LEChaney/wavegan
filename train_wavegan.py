@@ -275,10 +275,20 @@ def train(fps, args):
     reset_G_opt_op = tf.variables_initializer(G_opt.variables())
     reset_D_opt_op = tf.variables_initializer(D_opt.variables())
 
-  # Create training ops
-  G_train_op = G_opt.minimize(G_loss, var_list=G_vars,
+  # Gradient accumulation ops
+  G_accum_grads = [tf.Variable(tf.zeros_like(G_var), trainable=False) for G_var in G_vars]
+  G_zero_accum_ops = [gradient.assign(tf.zeros_like(gradient)) for gradient in G_accum_grads]
+  G_grad_vars = G_opt.compute_gradients(G_loss, var_list=G_vars)
+  G_grad_accum_ops = [G_accum_grads[i].assign_add(grad_var[0]) for i, grad_var in enumerate(G_grad_vars)]
+  D_accum_grads = [tf.Variable(tf.zeros_like(D_var), trainable=False) for D_var in D_vars]
+  D_zero_accum_ops = [gradient.assign(tf.zeros_like(gradient)) for gradient in D_accum_grads]
+  D_grad_vars = D_opt.compute_gradients(D_loss, var_list=D_vars)
+  D_grad_accum_ops = [D_accum_grads[i].assign_add(grad_var[0]) for i, grad_var in enumerate(D_grad_vars)]
+
+  # Create gradient apply / model update ops
+  G_train_op = G_opt.apply_gradients([(G_accum_grads[i] / args.n_minibatches, grad_var[1]) for i, grad_var in enumerate(G_grad_vars)],
       global_step=tf.train.get_or_create_global_step())
-  D_train_op = D_opt.minimize(D_loss, var_list=D_vars)
+  D_train_op = D_opt.apply_gradients([(D_accum_grads[i] / args.n_minibatches, grad_var[1]) for i, grad_var in enumerate(D_grad_vars)])
 
   def np_lerp_clip(t, a, b):
     return a + (b - a) * np.clip(t, 0.0, 1.0)
@@ -332,11 +342,14 @@ def train(fps, args):
         summary_writer.add_summary(lod_summary, step)
 
       # Train discriminator
-      for i in xrange(args.wavegan_disc_nupdates):
-        if args.use_progressive_growing:
-          sess.run(D_train_op, feed_dict={lod: cur_lod})
-        else:
-          sess.run(D_train_op)
+      for _ in range(args.wavegan_disc_nupdates):
+        sess.run(D_zero_accum_ops)
+        for _ in range(args.n_minibatches):
+          if args.use_progressive_growing:
+            sess.run(D_grad_accum_ops, feed_dict={lod: cur_lod})
+          else:
+            sess.run(D_grad_accum_ops)
+        sess.run(D_train_op)
 
         # Enforce Lipschitz constraint for WGAN
         if D_clip_weights is not None:
@@ -346,10 +359,13 @@ def train(fps, args):
             sess.run(D_clip_weights)
 
       # Train generator
-      if args.use_progressive_growing:
-        sess.run(G_train_op, feed_dict={lod: cur_lod})
-      else:
-        sess.run(G_train_op)
+      sess.run(G_zero_accum_ops)
+      for _ in range(args.n_minibatches):
+        if args.use_progressive_growing:
+          sess.run(G_grad_accum_ops, feed_dict={lod: cur_lod})
+        else:
+          sess.run(G_grad_accum_ops)
+      sess.run(G_train_op)
 
 
 """
@@ -757,6 +773,8 @@ if __name__ == '__main__':
       help='Number of dimensions for the label embeddings')
   wavegan_args.add_argument('--use_maxout', action='store_true', dest='use_maxout',
       help='Use maxout activation instead of relu / leaky relu')
+  wavegan_args.add_argument('--n_minibatches', type=int,
+      help='Number of minibatches to train with gradient accumulation')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -813,7 +831,8 @@ if __name__ == '__main__':
     use_resnet=False,
     use_conditioning=False,
     embedding_dim=100,
-    use_maxout=False)
+    use_maxout=False,
+    n_minibatches=1)
 
   args = parser.parse_args()
 
