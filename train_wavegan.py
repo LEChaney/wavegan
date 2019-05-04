@@ -272,7 +272,7 @@ def train(fps, args):
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
+        learning_rate=2e-4,
         beta1=0.0,
         beta2=0.9)
   else:
@@ -419,7 +419,12 @@ def infer(args):
     lod = tf.placeholder(tf.float32, shape=[], name='lod')
 
   # Select model
-  build_generator = RWaveGANGenerator if args.use_resnet else WaveGANGenerator
+  if args.use_deep_resnet:
+    build_generator = DRWaveGANGenerator
+  elif args.use_resnet:
+    build_generator = RWaveGANGenerator
+  else:
+    build_generator = WaveGANGenerator
 
   yembed = None
   if args.use_conditioning:
@@ -785,6 +790,8 @@ if __name__ == '__main__':
       help='Use maxout activation instead of relu / leaky relu')
   wavegan_args.add_argument('--n_minibatches', type=int,
       help='Number of minibatches to train with gradient accumulation')
+  wavegan_args.add_argument('--use_ortho_init', action='store_true', dest='use_ortho_init',
+      help='Use orthogonal initialization instead of Xavier / Glorot')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -843,7 +850,8 @@ if __name__ == '__main__':
     use_conditioning=False,
     embedding_dim=100,
     use_maxout=False,
-    n_minibatches=1)
+    n_minibatches=1,
+    use_ortho_init=False)
 
   args = parser.parse_args()
 
@@ -863,14 +871,16 @@ if __name__ == '__main__':
     'dim': args.wavegan_dim,
     'use_batchnorm': args.wavegan_batchnorm,
     'upsample': args.wavegan_genr_upsample,
-    'use_maxout': args.use_maxout
+    'use_maxout': args.use_maxout,
+    'use_ortho_init': args.use_ortho_init
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
     'dim': args.wavegan_dim,
     'use_batchnorm': args.wavegan_batchnorm,
     'phaseshuffle_rad': args.wavegan_disc_phaseshuffle,
-    'use_maxout': args.use_maxout
+    'use_maxout': args.use_maxout,
+    'use_ortho_init': args.use_ortho_init
   })
 
   if args.mode == 'train':

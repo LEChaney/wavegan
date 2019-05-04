@@ -16,9 +16,16 @@ def RWaveGANGenerator(
     upsample='zeros',
     train=False,
     yembed=None,
-    use_maxout=False):
+    use_maxout=False,
+    use_ortho_init=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
+
+  # Select initialization method
+  if use_ortho_init:
+    kernel_initializer = tf.initializers.orthogonal
+  else:
+    kernel_initializer = None
 
   if use_maxout:
     activation = maxout
@@ -38,7 +45,8 @@ def RWaveGANGenerator(
                           stride=stride,
                           upsample=upsample,
                           normalization=batchnorm,
-                          activation=activation)
+                          activation=activation,
+                          kernel_initializer=kernel_initializer)
 
   # Conditioning input
   output = z
@@ -49,7 +57,7 @@ def RWaveGANGenerator(
   # [100] -> [16, 1024]
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
+    output = tf.layers.dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
   dim_mul //= 2
 
@@ -109,7 +117,7 @@ def RWaveGANGenerator(
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
     output = tf.nn.relu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -137,9 +145,16 @@ def RWaveGANDiscriminator(
     phaseshuffle_rad=0,
     labels=None,
     nlabels=1,
-    use_maxout=False):
+    use_maxout=False,
+    use_ortho_init=False):
   batch_size = tf.shape(x)[0]
   slice_len = int(x.get_shape()[1])
+
+  # Select initialization method
+  if use_ortho_init:
+    kernel_initializer = tf.initializers.orthogonal
+  else:
+    kernel_initializer = None
 
   if use_maxout:
     activation = maxout
@@ -164,20 +179,22 @@ def RWaveGANDiscriminator(
                           stride=stride,
                           normalization=batchnorm,
                           phaseshuffle=phaseshuffle,
-                          activation=activation)
+                          activation=activation,
+                          kernel_initializer=kernel_initializer)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
                           stride=stride,
                           normalization=batchnorm,
                           phaseshuffle=lambda x: x,
-                          activation=activation)
+                          activation=activation,
+                          kernel_initializer=kernel_initializer)
 
   # From audio layer
   # [16384, nch] -> [16384, 32]
   output = x
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim // 2, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, dim // 2, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
   # Layer 0
   # [16384, 32] -> [4096, 64]
@@ -225,11 +242,11 @@ def RWaveGANDiscriminator(
   # Connect to single logit
   with tf.variable_scope('output'):
     if labels is not None:
-      output = tf.layers.dense(output, nlabels)
+      output = tf.layers.dense(output, nlabels, kernel_initializer=kernel_initializer)
       indices = tf.range(tf.shape(output)[0])
       output = tf.gather_nd(output, tf.stack([indices, labels], -1))
     else:
-      output = tf.layers.dense(output, 1)[:, 0]
+      output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 

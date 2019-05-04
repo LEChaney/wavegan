@@ -87,7 +87,8 @@ def residual_block(inputs,
                    activation=lrelu,
                    normalization=lambda x: x,
                    phaseshuffle=lambda x: x,
-                   wscale=1):
+                   wscale=1,
+                   kernel_initializer=tf.initializers.orthogonal):
   '''
   Args:
     inputs: 
@@ -95,7 +96,6 @@ def residual_block(inputs,
     kernel_size: Default 9
     stride: Default 1
     upsample: Either 'zeros' (default) or 'nn' for nearest neighbor upsample
-    num_resblocks: The number of residual blocks in the network, used for scaling initialization
     activation: Activation function to use default lrelu
     normalization: Normalization function to use, default: identity function
   '''
@@ -118,7 +118,8 @@ def residual_block(inputs,
         extra_features = tf.layers.conv1d(shortcut, out_features - in_features,
                                           kernel_size=1,
                                           strides=1,
-                                          padding='valid')
+                                          padding='valid',
+                                          kernel_initializer=kernel_initializer)
         shortcut = tf.concat([shortcut, extra_features], 2)
     elif in_features > out_features:
       with tf.variable_scope('drop_shortcut'):
@@ -136,18 +137,18 @@ def residual_block(inputs,
         code = activation(code)  # Pre-Activation
         code = phaseshuffle(code)
       if is_upsampling:
-        code = conv1d_transpose(code, internal_filters, kernel_size, strides=stride, padding='same')
+        code = conv1d_transpose(code, internal_filters, kernel_size, strides=stride, padding='same', kernel_initializer=kernel_initializer)
       else:
-        code = tf.layers.conv1d(code, internal_filters, kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, internal_filters, kernel_size, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
       if is_upsampling:
-        code = tf.layers.conv1d(code, out_features, kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, out_features, kernel_size, strides=1, padding='same', kernel_initializer=kernel_initializer)
       else:
-        code = tf.layers.conv1d(code, out_features, kernel_size, strides=stride, padding='same')
+        code = tf.layers.conv1d(code, out_features, kernel_size, strides=stride, padding='same', kernel_initializer=kernel_initializer)
 
     # Add shortcut connection
     code = shortcut + wscale * code
@@ -163,7 +164,8 @@ def bottleneck_block(inputs,
                      activation=lrelu, 
                      normalization=lambda x: x,
                      phaseshuffle=lambda x: x,
-                     wscale=1):
+                     wscale=1,
+                     kernel_initializer=tf.initializers.orthogonal):
   '''
   Args:
     inputs: 
@@ -171,7 +173,6 @@ def bottleneck_block(inputs,
     kernel_size: Default 9
     stride: Default 1
     upsample: Either 'zeros' (default) or 'nn' for nearest neighbor upsample
-    num_resblocks: The number of residual blocks in the network, used for scaling initialization
     activation: Activation function to use default lrelu
     normalization: Normalization function to use, default: identity function
   '''
@@ -197,7 +198,8 @@ def bottleneck_block(inputs,
         extra_features = tf.layers.conv1d(shortcut, filters - in_features,
                                           kernel_size=1,
                                           strides=1,
-                                          padding='valid')
+                                          padding='valid',
+                                          kernel_initializer=kernel_initializer)
         shortcut = tf.concat([shortcut, extra_features], 2)
     elif in_features > filters:
       with tf.variable_scope('drop_shortcut'):
@@ -214,7 +216,7 @@ def bottleneck_block(inputs,
         code = normalization(code)
         code = activation(code)
         code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, internal_filters_0, kernel_size=1, strides=1, padding='same')
+      code = tf.layers.conv1d(code, internal_filters_0, kernel_size=1, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     # Convolutions
     with tf.variable_scope('conv_0'):
@@ -222,25 +224,25 @@ def bottleneck_block(inputs,
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
       if is_upsampling:
-        code = conv1d_transpose(code, internal_filters_0, kernel_size, strides=stride, padding='same')
+        code = conv1d_transpose(code, internal_filters_0, kernel_size, strides=stride, padding='same', kernel_initializer=kernel_initializer)
       else:
-        code = tf.layers.conv1d(code, internal_filters_0, kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, internal_filters_0, kernel_size, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     with tf.variable_scope('conv_1'):
       code = normalization(code)
       code = activation(code)  # Pre-Activation
       code = phaseshuffle(code)
       if is_upsampling:
-        code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=1, padding='same')
+        code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=1, padding='same', kernel_initializer=kernel_initializer)
       else:
-        code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=stride, padding='same')
+        code = tf.layers.conv1d(code, internal_filters_1, kernel_size, strides=stride, padding='same', kernel_initializer=kernel_initializer)
 
     # Feature expansion
     with tf.variable_scope('expand_f'):
       code = normalization(code)
       code = activation(code)
       code = phaseshuffle(code)
-      code = tf.layers.conv1d(code, filters, kernel_size=1, strides=1, padding='same')
+      code = tf.layers.conv1d(code, filters, kernel_size=1, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
     # Add shortcut connection
     code = shortcut + wscale * code

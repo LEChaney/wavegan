@@ -16,10 +16,17 @@ def DRWaveGANGenerator(
     upsample='zeros',
     train=False,
     yembed=None,
-    use_maxout=False):
+    use_maxout=False,
+    use_ortho_init=True):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
   size = slice_len // 1024
+
+  # Select initialization method
+  if use_ortho_init:
+    kernel_initializer = tf.initializers.orthogonal
+  else:
+    kernel_initializer = None
 
   if use_maxout:
     activation = maxout
@@ -34,13 +41,14 @@ def DRWaveGANGenerator(
   else:
     batchnorm = lambda x: x
 
-  wscale = 0.1
+  wscale = 1
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len, 
                           stride=1,
                           normalization=batchnorm,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
   
   def up_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len, 
@@ -48,7 +56,8 @@ def DRWaveGANGenerator(
                           upsample=upsample,
                           normalization=batchnorm,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
 
   # Conditioning input
   output = z
@@ -58,7 +67,7 @@ def DRWaveGANGenerator(
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, dim * 16 * size)
+    output = tf.layers.dense(output, dim * 16 * size, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, size, dim * 16])
 
   # Layer 0
@@ -102,7 +111,7 @@ def DRWaveGANGenerator(
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
     output = lrelu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -130,8 +139,15 @@ def DRWaveGANDiscriminator(
     phaseshuffle_rad=0,
     labels=None,
     nlabels=1,
-    use_maxout=False):
+    use_maxout=False,
+    use_ortho_init=True):
   batch_size = tf.shape(x)[0]
+
+  # Select initialization method
+  if use_ortho_init:
+    kernel_initializer = tf.initializers.orthogonal
+  else:
+    kernel_initializer = None
 
   if use_maxout:
     activation = maxout
@@ -151,14 +167,15 @@ def DRWaveGANDiscriminator(
   else:
     phaseshuffle = lambda x: x
 
-  wscale = 0.1
+  wscale = 1
   def res_block(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
                           stride=1,
                           normalization=batchnorm,
                           phaseshuffle=phaseshuffle,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
 
   def res_block_no_ph(inputs, filters):
     return residual_block(inputs, filters, kernel_len,
@@ -166,7 +183,8 @@ def DRWaveGANDiscriminator(
                           normalization=batchnorm,
                           phaseshuffle=lambda x: x,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
   
   def down_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
@@ -174,7 +192,8 @@ def DRWaveGANDiscriminator(
                           normalization=batchnorm,
                           phaseshuffle=phaseshuffle,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
@@ -182,13 +201,14 @@ def DRWaveGANDiscriminator(
                           normalization=batchnorm,
                           phaseshuffle=lambda x: x,
                           activation=activation,
-                          wscale=wscale)
+                          wscale=wscale,
+                          kernel_initializer=kernel_initializer)
 
   # From audio layer
   # [16384, nch] -> [16384, 64]
   output = x
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim, kernel_len, strides=1, padding='same')
+    output = tf.layers.conv1d(output, dim, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
 
   # Layer 0
   # [16384, 64] -> [4096, 128]
@@ -236,11 +256,11 @@ def DRWaveGANDiscriminator(
   # Connect to single logit
   with tf.variable_scope('output'):
     if labels is not None:
-      output = tf.layers.dense(output, nlabels)
+      output = tf.layers.dense(output, nlabels, kernel_initializer=kernel_initializer)
       indices = tf.range(tf.shape(output)[0])
       output = tf.gather_nd(output, tf.stack([indices, labels], -1))
     else:
-      output = tf.layers.dense(output, 1)[:, 0]
+      output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 
