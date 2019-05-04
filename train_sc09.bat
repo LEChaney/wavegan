@@ -9,9 +9,9 @@ python train_wavegan.py train .\train_sc09 ^
 --wavegan_disc_phaseshuffle 1 ^
 --wavegan_latent_dim 128 ^
 --embedding_dim 128 ^
---wavegan_kernel_len 8 ^
+--wavegan_kernel_len 24 ^
 --wavegan_dim 64 ^
 --train_batch_size 32 ^
---n_minibatches 4 ^
+--n_minibatches 16 ^
 --train_save_secs 600 ^
 --train_summary_secs 15
