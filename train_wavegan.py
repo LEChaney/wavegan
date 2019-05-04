@@ -18,6 +18,7 @@ import loader
 from wavegan import WaveGANGenerator, WaveGANDiscriminator
 from progressive_wavegan import PWaveGANGenerator, PWaveGANDiscriminator
 from rwavegan import RWaveGANGenerator, RWaveGANDiscriminator
+from drwavegan import DRWaveGANGenerator, DRWaveGANDiscriminator
 
 
 """
@@ -58,8 +59,15 @@ def train(fps, args):
     lod = tf.placeholder(tf.float32, shape=[])
 
   # Select model
-  build_generator = RWaveGANGenerator if args.use_resnet else WaveGANGenerator
-  build_discriminator = RWaveGANDiscriminator if args.use_resnet else WaveGANDiscriminator
+  if args.use_deep_resnet:
+    build_generator = DRWaveGANGenerator
+    build_discriminator = DRWaveGANDiscriminator
+  elif args.use_resnet:
+    build_generator = RWaveGANGenerator
+    build_discriminator = RWaveGANDiscriminator
+  else:
+    build_generator = WaveGANGenerator
+    build_discriminator = WaveGANDiscriminator
   
   # Make generator
   with tf.variable_scope('G'):
@@ -264,7 +272,7 @@ def train(fps, args):
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=2e-4,
+        learning_rate=1e-4,
         beta1=0.0,
         beta2=0.9)
   else:
@@ -767,6 +775,8 @@ if __name__ == '__main__':
       help='Enable progressive growing of WaveGAN')
   wavegan_args.add_argument('--use_resnet', action='store_true', dest='use_resnet',
       help='Use Resnet version of WaveGAN')
+  wavegan_args.add_argument('--use_deep_resnet', action='store_true', dest='use_deep_resnet',
+      help='Use a deeper variant (12 residual blocks) of the Resnet model')
   wavegan_args.add_argument('--use_conditioning', action='store_true', dest='use_conditioning',
       help='Condition the GAN on audio labels extracted from filename')
   wavegan_args.add_argument('--embedding_dim', type=int,
@@ -829,6 +839,7 @@ if __name__ == '__main__':
     incept_k=10,
     use_progressive_growing=False,
     use_resnet=False,
+    use_deep_resnet=False,
     use_conditioning=False,
     embedding_dim=100,
     use_maxout=False,

@@ -1,12 +1,14 @@
 python train_wavegan.py train .\train_sc09 ^
 --data_dir .\data\sc09\train ^
---use_resnet ^
---use_maxout ^
+--use_deep_resnet ^
 --use_conditioning ^
 --data_first_slice ^
 --data_fast_wav ^
 --wavegan_disc_nupdates 1 ^
 --wavegan_disc_phaseshuffle 1 ^
+--wavegan_latent_dim 256 ^
+--embedding_dim 256 ^
+--wavegan_kernel_len 8 ^
 --wavegan_dim 64 ^
 --train_batch_size 16 ^
 --n_minibatches 8 ^
