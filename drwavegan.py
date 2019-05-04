@@ -1,6 +1,6 @@
 import tensorflow as tf
 import math
-from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, apply_phaseshuffle
+from ops import maxout, lrelu, round_to_nearest_multiple, bottleneck_block, apply_phaseshuffle
 
 """
   Input: [None, 100]
@@ -34,7 +34,7 @@ def DRWaveGANGenerator(
     # This should bring the model back to the same total number of parameters.
     dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
   else:
-    activation = lrelu
+    activation = tf.nn.relu
 
   if use_batchnorm:
     batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
@@ -43,21 +43,21 @@ def DRWaveGANGenerator(
 
   wscale = 1
   def res_block(inputs, filters):
-    return residual_block(inputs, filters, kernel_len, 
-                          stride=1,
-                          normalization=batchnorm,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=1,
+                            normalization=batchnorm,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
   
   def up_res_block(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len, 
-                          stride=stride,
-                          upsample=upsample,
-                          normalization=batchnorm,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=stride,
+                            upsample=upsample,
+                            normalization=batchnorm,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
 
   # Conditioning input
   output = z
@@ -71,46 +71,40 @@ def DRWaveGANGenerator(
     output = tf.reshape(output, [batch_size, size, dim * 16])
 
   # Layer 0
-  # [16, 1024] -> [16, 1024]
+  # [16, 1024] -> [64, 1024]
   with tf.variable_scope('res_0'):
-    output = res_block(output, dim * 16)
-    output = res_block(output, dim * 16)
+    output =    res_block(output, dim * 16)
+    output = up_res_block(output, dim * 16)
 
   # Layer 1
-  # [16, 1024] -> [64, 1024]
+  # [64, 1024] -> [256, 512]
   with tf.variable_scope('res_1'):
-    output = up_res_block(output, dim * 16)
     output =    res_block(output, dim * 16)
+    output = up_res_block(output, dim * 8)
 
   # Layer 2
-  # [64, 1024] -> [256, 512]
+  # [256, 512] -> [1024, 256]
   with tf.variable_scope('res_2'):
-    output = up_res_block(output, dim * 8)
     output =    res_block(output, dim * 8)
+    output = up_res_block(output, dim * 4)
 
   # Layer 3
-  # [256, 512] -> [1024, 256]
+  # [1024, 256] -> [4096, 128]
   with tf.variable_scope('res_3'):
-    output = up_res_block(output, dim * 4)
     output =    res_block(output, dim * 4)
+    output = up_res_block(output, dim * 2)
 
   # Layer 4
-  # [1024, 256] -> [4096, 128]
-  with tf.variable_scope('res_4'):
-    output = up_res_block(output, dim * 2)
-    output =    res_block(output, dim * 2)
-
-  # Layer 5
   # [4096, 128] -> [16384, 64]
-  with tf.variable_scope('res_5'):
+  with tf.variable_scope('res_4'):
+    output =    res_block(output, dim * 2)
     output = up_res_block(output, dim * 1)
-    output =    res_block(output, dim * 1)
 
   # To audio layer
   # [16384, 64] -> [16384, nch]
   with tf.variable_scope('to_audio'):
     output = batchnorm(output)
-    output = lrelu(output)
+    output = tf.nn.relu(output)
     output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
     output = tf.nn.tanh(output)
 
@@ -169,40 +163,40 @@ def DRWaveGANDiscriminator(
 
   wscale = 1
   def res_block(inputs, filters):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=1,
-                          normalization=batchnorm,
-                          phaseshuffle=phaseshuffle,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=1,
+                            normalization=batchnorm,
+                            phaseshuffle=phaseshuffle,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
 
   def res_block_no_ph(inputs, filters):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=1,
-                          normalization=batchnorm,
-                          phaseshuffle=lambda x: x,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=1,
+                            normalization=batchnorm,
+                            phaseshuffle=lambda x: x,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
   
   def down_res_block(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=stride,
-                          normalization=batchnorm,
-                          phaseshuffle=phaseshuffle,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=stride,
+                            normalization=batchnorm,
+                            phaseshuffle=phaseshuffle,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
-    return residual_block(inputs, filters, kernel_len,
-                          stride=stride,
-                          normalization=batchnorm,
-                          phaseshuffle=lambda x: x,
-                          activation=activation,
-                          wscale=wscale,
-                          kernel_initializer=kernel_initializer)
+    return bottleneck_block(inputs, filters, kernel_len,
+                            stride=stride,
+                            normalization=batchnorm,
+                            phaseshuffle=lambda x: x,
+                            activation=activation,
+                            wscale=wscale,
+                            kernel_initializer=kernel_initializer)
 
   # From audio layer
   # [16384, nch] -> [16384, 64]
@@ -213,37 +207,31 @@ def DRWaveGANDiscriminator(
   # Layer 0
   # [16384, 64] -> [4096, 128]
   with tf.variable_scope('res_0'):
-    output =      res_block_no_ph(output, dim * 1)
     output = down_res_block_no_ph(output, dim * 2)
+    output =      res_block_no_ph(output, dim * 2)
 
   # Layer 1
   # [4096, 128] -> [1024, 256]
   with tf.variable_scope('res_1'):
-    output = res_block_no_ph(output, dim * 2)
     output =  down_res_block(output, dim * 4)
+    output = res_block_no_ph(output, dim * 4)
 
   # Layer 2
   # [1024, 256] -> [256, 512]
   with tf.variable_scope('res_2'):
-    output = res_block_no_ph(output, dim * 4)
     output =  down_res_block(output, dim * 8)
+    output = res_block_no_ph(output, dim * 8)
 
   # Layer 3
   # [256, 512] -> [64, 1024]
   with tf.variable_scope('res_3'):
-    output = res_block_no_ph(output, dim * 8)
     output =  down_res_block(output, dim * 16)
+    output = res_block_no_ph(output, dim * 16)
 
   # Layer 4
   # [64, 1024] -> [16, 1024]
   with tf.variable_scope('res_4'):
-    output = res_block_no_ph(output, dim * 16)
     output =  down_res_block(output, dim * 16)
-
-  # Layer 5
-  # [16, 1024] -> [16, 1024]
-  with tf.variable_scope('res_5'):
-    output = res_block_no_ph(output, dim * 16)
     output = res_block_no_ph(output, dim * 16)
   
   # Activate final layer

@@ -7,11 +7,11 @@ python train_wavegan.py train .\train_sc09 ^
 --data_fast_wav ^
 --wavegan_disc_nupdates 1 ^
 --wavegan_disc_phaseshuffle 1 ^
---wavegan_latent_dim 256 ^
---embedding_dim 256 ^
+--wavegan_latent_dim 128 ^
+--embedding_dim 128 ^
 --wavegan_kernel_len 8 ^
 --wavegan_dim 64 ^
---train_batch_size 16 ^
---n_minibatches 8 ^
+--train_batch_size 32 ^
+--n_minibatches 4 ^
 --train_save_secs 600 ^
 --train_summary_secs 15
