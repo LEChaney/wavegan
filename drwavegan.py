@@ -1,6 +1,6 @@
 import tensorflow as tf
 import math
-from ops import maxout, lrelu, round_to_nearest_multiple, bottleneck_block, apply_phaseshuffle
+from ops import maxout, lrelu, round_to_nearest_multiple, bottleneck_block, apply_phaseshuffle, conditional_batchnorm, z_to_gain_bias
 
 """
   Input: [None, 100]
@@ -17,7 +17,8 @@ def DRWaveGANGenerator(
     train=False,
     yembed=None,
     use_maxout=False,
-    use_ortho_init=True):
+    use_ortho_init=True,
+    use_skip_z=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
   size = slice_len // 1024
@@ -37,15 +38,24 @@ def DRWaveGANGenerator(
     activation = tf.nn.relu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
+    if use_skip_z:
+      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
+    else:
+      normalization = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
-    batchnorm = lambda x: x
+    if use_skip_z:
+      def condition(x):
+        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
+        return x * gain + bias
+      normalization = condition
+    else:
+      normalization = lambda x: x
 
   wscale = 1
   def res_block(inputs, filters):
     return bottleneck_block(inputs, filters, kernel_len,
                             stride=1,
-                            normalization=batchnorm,
+                            normalization=normalization,
                             activation=activation,
                             wscale=wscale,
                             kernel_initializer=kernel_initializer)
@@ -54,7 +64,7 @@ def DRWaveGANGenerator(
     return bottleneck_block(inputs, filters, kernel_len,
                             stride=stride,
                             upsample=upsample,
-                            normalization=batchnorm,
+                            normalization=normalization,
                             activation=activation,
                             wscale=wscale,
                             kernel_initializer=kernel_initializer)
@@ -103,7 +113,7 @@ def DRWaveGANGenerator(
   # To audio layer
   # [16384, 64] -> [16384, nch]
   with tf.variable_scope('to_audio'):
-    output = batchnorm(output)
+    output = normalization(output)
     output = tf.nn.relu(output)
     output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
     output = tf.nn.tanh(output)

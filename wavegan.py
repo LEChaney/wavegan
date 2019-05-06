@@ -1,6 +1,6 @@
 import tensorflow as tf
 import math
-from ops import maxout, lrelu, round_to_nearest_multiple, apply_phaseshuffle, conv1d_transpose
+from ops import maxout, lrelu, round_to_nearest_multiple, apply_phaseshuffle, conv1d_transpose, conditional_batchnorm, z_to_gain_bias
 
 
 """
@@ -18,7 +18,8 @@ def WaveGANGenerator(
     train=False,
     yembed=None,
     use_maxout=False,
-    use_ortho_init=False):
+    use_ortho_init=False,
+    use_skip_z=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -37,9 +38,18 @@ def WaveGANGenerator(
     activation = tf.nn.relu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
+    if use_skip_z:
+      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
+    else:
+      normalization = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
-    batchnorm = lambda x: x
+    if use_skip_z:
+      def condition(x):
+        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
+        return x * gain + bias
+      normalization = condition
+    else:
+      normalization = lambda x: x
 
   # Conditioning input
   output = z
@@ -52,7 +62,7 @@ def WaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
-    output = batchnorm(output)
+    output = normalization(output)
   output = activation(output)
   dim_mul //= 2
 
@@ -60,7 +70,7 @@ def WaveGANGenerator(
   # [16, 1024] -> [64, 512]
   with tf.variable_scope('upconv_0'):
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-    output = batchnorm(output)
+    output = normalization(output)
   output = activation(output)
   dim_mul //= 2
 
@@ -68,7 +78,7 @@ def WaveGANGenerator(
   # [64, 512] -> [256, 256]
   with tf.variable_scope('upconv_1'):
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-    output = batchnorm(output)
+    output = normalization(output)
   output = activation(output)
   dim_mul //= 2
 
@@ -76,7 +86,7 @@ def WaveGANGenerator(
   # [256, 256] -> [1024, 128]
   with tf.variable_scope('upconv_2'):
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-    output = batchnorm(output)
+    output = normalization(output)
   output = activation(output)
   dim_mul //= 2
 
@@ -84,7 +94,7 @@ def WaveGANGenerator(
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('upconv_3'):
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-    output = batchnorm(output)
+    output = normalization(output)
   output = activation(output)
 
   if slice_len == 16384:
@@ -98,7 +108,7 @@ def WaveGANGenerator(
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-      output = batchnorm(output)
+      output = normalization(output)
     output = activation(output)
 
     # Layer 5
@@ -111,7 +121,7 @@ def WaveGANGenerator(
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
       output = conv1d_transpose(output, dim, kernel_len, 4, upsample=upsample, kernel_initializer=kernel_initializer)
-      output = batchnorm(output)
+      output = normalization(output)
     output = activation(output)
 
     # Layer 5

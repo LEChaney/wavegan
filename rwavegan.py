@@ -1,6 +1,6 @@
 import tensorflow as tf
 import math
-from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, apply_phaseshuffle
+from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, apply_phaseshuffle, z_to_gain_bias, conditional_batchnorm
 
 """
   Input: [None, 100]
@@ -17,7 +17,8 @@ def RWaveGANGenerator(
     train=False,
     yembed=None,
     use_maxout=False,
-    use_ortho_init=False):
+    use_ortho_init=False,
+    use_skip_z=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -36,25 +37,34 @@ def RWaveGANGenerator(
     activation = tf.nn.relu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=train)
+    if use_skip_z:
+      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
+    else:
+      normalization = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
-    batchnorm = lambda x: x
+    if use_skip_z:
+      def condition(x):
+        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
+        return x * gain + bias
+      normalization = condition
+    else:
+      normalization = lambda x: x
   
+  # Conditioning input
+  if yembed is not None:
+    z = tf.concat([z, yembed], 1)
+
   def up_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len, 
                           stride=stride,
                           upsample=upsample,
-                          normalization=batchnorm,
+                          normalization=normalization,
                           activation=activation,
                           kernel_initializer=kernel_initializer)
 
-  # Conditioning input
-  output = z
-  if yembed is not None:
-    output = tf.concat([z, yembed], 1)
-
   # FC and reshape for convolution
   # [100] -> [16, 1024]
+  output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
@@ -115,7 +125,7 @@ def RWaveGANGenerator(
   # To audio layer
   # [16384, 32] -> [16384, nch]
   with tf.variable_scope('to_audio'):
-    output = batchnorm(output)
+    output = normalization(output)
     output = tf.nn.relu(output)
     output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
     output = tf.nn.tanh(output)

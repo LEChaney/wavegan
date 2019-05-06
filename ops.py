@@ -78,6 +78,21 @@ def apply_phaseshuffle(x, rad, pad_type='reflect'):
   return x
 
 
+def z_to_gain_bias(z, out_features, kernel_initializer=tf.initializers.orthogonal):
+  with tf.variable_scope('z_to_gain'):
+    gain = 1 + tf.layers.dense(z, out_features, use_bias=False, kernel_initializer=tf.initializers.orthogonal)
+    gain = tf.reshape(gain, [tf.shape(gain)[0], 1, -1])
+  with tf.variable_scope('z_to_bias'):
+    bias = tf.layers.dense(z, out_features, use_bias=False, kernel_initializer=tf.initializers.orthogonal)
+    bias = tf.reshape(bias, [tf.shape(bias)[0], 1, -1])
+  return gain, bias
+
+
+def conditional_batchnorm(inputs, z, training=False, kernel_initializer=tf.initializers.orthogonal):
+  gain, bias = z_to_gain_bias(z, inputs.shape[-1], kernel_initializer=kernel_initializer)
+  return gain * tf.layers.batch_normalization(inputs, training=training, center=False, scale=False) + bias
+
+
 def residual_block(inputs, 
                    filters, 
                    kernel_size=9, 

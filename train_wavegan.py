@@ -792,6 +792,9 @@ if __name__ == '__main__':
       help='Number of minibatches to train with gradient accumulation')
   wavegan_args.add_argument('--use_ortho_init', action='store_true', dest='use_ortho_init',
       help='Use orthogonal initialization instead of Xavier / Glorot')
+  wavegan_args.add_argument('--use_skip_z', action='store_true', dest='use_skip_z',
+      help='Add skip connections from latent vector to every layer to fascilitate \
+            better use of latent vector to generate features at mutliple scales')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -851,7 +854,8 @@ if __name__ == '__main__':
     embedding_dim=100,
     use_maxout=False,
     n_minibatches=1,
-    use_ortho_init=False)
+    use_ortho_init=False,
+    use_skip_z=False)
 
   args = parser.parse_args()
 
@@ -872,7 +876,8 @@ if __name__ == '__main__':
     'use_batchnorm': args.wavegan_batchnorm,
     'upsample': args.wavegan_genr_upsample,
     'use_maxout': args.use_maxout,
-    'use_ortho_init': args.use_ortho_init
+    'use_ortho_init': args.use_ortho_init,
+    'use_skip_z': args.use_skip_z
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
