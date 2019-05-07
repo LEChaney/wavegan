@@ -36,6 +36,10 @@ def RWaveGANGenerator(
   else:
     activation = tf.nn.relu
 
+  # Conditioning input
+  if yembed is not None:
+    z = tf.concat([z, yembed], 1)
+
   if use_batchnorm:
     if use_skip_z:
       normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
@@ -49,10 +53,6 @@ def RWaveGANGenerator(
       normalization = condition
     else:
       normalization = lambda x: x
-  
-  # Conditioning input
-  if yembed is not None:
-    z = tf.concat([z, yembed], 1)
 
   def up_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len, 

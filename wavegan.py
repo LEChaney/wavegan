@@ -37,6 +37,10 @@ def WaveGANGenerator(
   else:
     activation = tf.nn.relu
 
+  # Conditioning input
+  if yembed is not None:
+    z = tf.concat([z, yembed], 1)
+
   if use_batchnorm:
     if use_skip_z:
       normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
@@ -51,13 +55,9 @@ def WaveGANGenerator(
     else:
       normalization = lambda x: x
 
-  # Conditioning input
-  output = z
-  if yembed is not None:
-    output = tf.concat([z, yembed], 1)
-
   # FC and reshape for convolution
   # [100] -> [16, 1024]
+  output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)

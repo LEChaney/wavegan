@@ -37,6 +37,10 @@ def DRWaveGANGenerator(
   else:
     activation = tf.nn.relu
 
+  # Conditioning input
+  if yembed is not None:
+    z = tf.concat([z, yembed], 1)
+
   if use_batchnorm:
     if use_skip_z:
       normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
@@ -69,13 +73,9 @@ def DRWaveGANGenerator(
                             wscale=wscale,
                             kernel_initializer=kernel_initializer)
 
-  # Conditioning input
-  output = z
-  if yembed is not None:
-    output = tf.concat([z, yembed], 1)
-
   # FC and reshape for convolution
   # [100] -> [16, 1024]
+  output = z
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, dim * 16 * size, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, size, dim * 16])
