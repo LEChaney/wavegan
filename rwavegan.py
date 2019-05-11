@@ -1,26 +1,29 @@
 import tensorflow as tf
 import math
-from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, apply_phaseshuffle, z_to_gain_bias, conditional_batchnorm
+from tensorflow.python.keras.layers import multiply, add, Lambda
+from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, reshape
+from ops import apply_phaseshuffle, z_to_gain_bias, conditional_batchnorm
+from ops import dense, dense_sn, conv1d, conv_sn1d
+from functools import partial
 
 """
   Input: [None, 100]
   Output: [None, slice_len, 1]
 """
 def RWaveGANGenerator(
-    z,
+    input_shape,
     slice_len=16384,
     nch=1,
     kernel_len=9,
     dim=64,
     use_batchnorm=False,
     upsample='zeros',
-    train=False,
-    yembed=None,
+    train=None,
     use_maxout=False,
     use_ortho_init=False,
-    use_skip_z=False):
+    use_skip_z=False,
+    use_sn=False):
   assert slice_len in [16384, 32768, 65536]
-  batch_size = tf.shape(z)[0]
 
   # Select initialization method
   if use_ortho_init:
@@ -34,22 +37,20 @@ def RWaveGANGenerator(
     # This should bring the model back to the same total number of parameters.
     dim = round_to_nearest_multiple(dim * math.sqrt(2), 4)
   else:
-    activation = tf.nn.relu
+    activation = tf.keras.layers.Activation('relu')
 
-  # Conditioning input
-  if yembed is not None:
-    z = tf.concat([z, yembed], 1)
+  z = tf.keras.layers.Input(input_shape)
 
   if use_batchnorm:
     if use_skip_z:
-      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
+      normalization = lambda x: conditional_batchnorm(x, z, use_sn=use_sn, kernel_initializer=kernel_initializer, training=train)
     else:
-      normalization = lambda x: tf.layers.batch_normalization(x, training=train)
+      normalization = lambda x: tf.keras.layers.BatchNormalization()(x, training=train)
   else:
     if use_skip_z:
       def condition(x):
-        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
-        return x * gain + bias
+        gain, bias = z_to_gain_bias(z, x.shape[-1], use_sn=use_sn, kernel_initializer=kernel_initializer, training=train)
+        return add([multiply([x, gain]), bias])
       normalization = condition
     else:
       normalization = lambda x: x
@@ -60,15 +61,24 @@ def RWaveGANGenerator(
                           upsample=upsample,
                           normalization=normalization,
                           activation=activation,
-                          kernel_initializer=kernel_initializer)
+                          kernel_initializer=kernel_initializer,
+                          use_sn=use_sn,
+                          training=train)
+  
+  if use_sn:
+    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer, training=train)
+    which_conv = partial(conv_sn1d, kernel_initializer=kernel_initializer, training=train)
+  else:
+    which_dense = partial(dense, kernel_initializer=kernel_initializer)
+    which_conv = partial(conv1d, kernel_initializer=kernel_initializer)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
-    output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
+    output = which_dense(output, 4 * 4 * dim * dim_mul)
+    output = reshape(output, [16, dim * dim_mul])
   dim_mul //= 2
 
   # Layer 0
@@ -126,9 +136,9 @@ def RWaveGANGenerator(
   # [16384, 32] -> [16384, nch]
   with tf.variable_scope('to_audio'):
     output = normalization(output)
-    output = tf.nn.relu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
-    output = tf.nn.tanh(output)
+    output = tf.keras.layers.Activation('relu')(output)
+    output = which_conv(output, nch, kernel_len, strides=1, padding='same')
+    output = tf.keras.layers.Activation('tanh')(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
@@ -138,9 +148,9 @@ def RWaveGANGenerator(
     # else:
     #   assert len(update_ops) == 12
     with tf.control_dependencies(update_ops):
-      output = tf.identity(output)
+      output = Lambda(lambda x: tf.identity(x))(output)
 
-  return output
+  return tf.keras.Model(inputs=z, outputs=output)
 
 
 """
@@ -148,7 +158,7 @@ def RWaveGANGenerator(
   Output: [None] (linear output)
 """
 def RWaveGANDiscriminator(
-    x,
+    input_shape,
     kernel_len=9,
     dim=64,
     use_batchnorm=False,
@@ -156,9 +166,9 @@ def RWaveGANDiscriminator(
     labels=None,
     nlabels=1,
     use_maxout=False,
-    use_ortho_init=False):
-  batch_size = tf.shape(x)[0]
-  slice_len = int(x.get_shape()[1])
+    use_ortho_init=False,
+    use_sn=False):
+  slice_len = int(input_shape[0])
 
   # Select initialization method
   if use_ortho_init:
@@ -175,7 +185,7 @@ def RWaveGANDiscriminator(
     activation = lrelu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
+    batchnorm = lambda x: tf.layers.BatchNormalization()(x, training=True)
   else:
     batchnorm = lambda x: x
 
@@ -190,7 +200,9 @@ def RWaveGANDiscriminator(
                           normalization=batchnorm,
                           phaseshuffle=phaseshuffle,
                           activation=activation,
-                          kernel_initializer=kernel_initializer)
+                          kernel_initializer=kernel_initializer,
+                          use_sn=use_sn,
+                          training=True)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len,
@@ -198,13 +210,24 @@ def RWaveGANDiscriminator(
                           normalization=batchnorm,
                           phaseshuffle=lambda x: x,
                           activation=activation,
-                          kernel_initializer=kernel_initializer)
+                          kernel_initializer=kernel_initializer,
+                          use_sn=use_sn,
+                          training=True)
+  
+  if use_sn:
+    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer, training=True)
+    which_conv = partial(conv_sn1d, kernel_initializer=kernel_initializer, training=True)
+  else:
+    which_dense = partial(dense, kernel_initializer=kernel_initializer)
+    which_conv = partial(conv1d, kernel_initializer=kernel_initializer)
+
+  inputs = tf.keras.layers.Input(input_shape)
 
   # From audio layer
   # [16384, nch] -> [16384, 32]
-  output = x
+  output = inputs
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim // 2, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
+    output = which_conv(output, dim // 2, kernel_len, strides=1, padding='same')
 
   # Layer 0
   # [16384, 32] -> [4096, 64]
@@ -247,17 +270,19 @@ def RWaveGANDiscriminator(
   output = activation(output)
 
   # Flatten
-  output = tf.reshape(output, [batch_size, -1])
+  output = tf.keras.layers.Flatten()(output)
 
   # Connect to single logit
   with tf.variable_scope('output'):
     if labels is not None:
-      output = tf.layers.dense(output, nlabels, kernel_initializer=kernel_initializer)
-      indices = tf.range(tf.shape(output)[0])
-      output = tf.gather_nd(output, tf.stack([indices, labels], -1))
+      output = which_dense(output, nlabels)
+      def lookup_y_hat(x):
+        indices = tf.range(tf.shape(x)[0])
+        return tf.gather_nd(x, tf.stack([indices, labels], -1))
+      output = Lambda(lookup_y_hat)(output)
     else:
-      output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
+      output = Lambda(lambda x: which_dense(x, 1)[:, 0])(output)
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 
-  return output
+  return tf.keras.Model(inputs=inputs, outputs=output)

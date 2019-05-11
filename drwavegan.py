@@ -18,7 +18,8 @@ def DRWaveGANGenerator(
     yembed=None,
     use_maxout=False,
     use_ortho_init=True,
-    use_skip_z=False):
+    use_skip_z=False,
+    use_sn=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
   size = slice_len // 1024
@@ -49,7 +50,7 @@ def DRWaveGANGenerator(
   else:
     if use_skip_z:
       def condition(x):
-        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
+        gain, bias = z_to_gain_bias(z, x.shape[-1], training=train, kernel_initializer=kernel_initializer)
         return x * gain + bias
       normalization = condition
     else:
@@ -144,7 +145,8 @@ def DRWaveGANDiscriminator(
     labels=None,
     nlabels=1,
     use_maxout=False,
-    use_ortho_init=True):
+    use_ortho_init=True,
+    use_sn=False):
   batch_size = tf.shape(x)[0]
 
   # Select initialization method

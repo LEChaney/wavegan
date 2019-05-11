@@ -11,6 +11,8 @@ import time
 import pandas as pd
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.keras.layers import Lambda
+from tensorflow.python.keras import backend as K
 from tensorflow.python.training.summary_io import SummaryWriterCache
 from six.moves import xrange
 
@@ -19,12 +21,14 @@ from wavegan import WaveGANGenerator, WaveGANDiscriminator
 from progressive_wavegan import PWaveGANGenerator, PWaveGANDiscriminator
 from rwavegan import RWaveGANGenerator, RWaveGANDiscriminator
 from drwavegan import DRWaveGANGenerator, DRWaveGANDiscriminator
-
+from ops import dense
 
 """
   Trains a WaveGAN
 """
 def train(fps, args):
+  K.clear_session()
+
   with tf.name_scope('loader'):
     x = loader.decode_extract_and_batch(
         fps,
@@ -54,20 +58,23 @@ def train(fps, args):
   # Make z vector
   z = tf.random_uniform([args.train_batch_size, args.wavegan_latent_dim], -1., 1., dtype=tf.float32)
 
-  # The current LOD level
-  if args.use_progressive_growing:
-    lod = tf.placeholder(tf.float32, shape=[])
+  # Select input dimensions
+  if args.use_conditioning:
+    input_dim = args.wavegan_latent_dim + args.embedding_dim
+  else:
+    input_dim = args.wavegan_latent_dim
 
   # Select model
+  nlabels = len(vocab) if args.use_conditioning else 1
   if args.use_deep_resnet:
-    build_generator = DRWaveGANGenerator
-    build_discriminator = DRWaveGANDiscriminator
+    G = DRWaveGANGenerator([input_dim], train=True, **args.wavegan_g_kwargs)
+    D = DRWaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
   elif args.use_resnet:
-    build_generator = RWaveGANGenerator
-    build_discriminator = RWaveGANDiscriminator
+    G = RWaveGANGenerator([input_dim], train=True, **args.wavegan_g_kwargs)
+    D = RWaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
   else:
-    build_generator = WaveGANGenerator
-    build_discriminator = WaveGANDiscriminator
+    G = WaveGANGenerator([input_dim], train=True, **args.wavegan_g_kwargs)
+    D = WaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
   
   # Make generator
   with tf.variable_scope('G'):
@@ -75,15 +82,16 @@ def train(fps, args):
     if args.use_conditioning:
       embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
       yembed = tf.nn.embedding_lookup(embedding_table, y)
+      z = tf.concat([z, yembed], 1)
 
-    if args.use_progressive_growing:
-      G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
-    else:
-      G_z = build_generator(z, yembed=yembed, train=True, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
-        G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
-  G_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='G')
+        output = tf.keras.layers.Conv1D(args.data_num_channels, args.wavegan_genr_pp_len, use_bias=False, padding='same')(G.output)
+        G = tf.keras.Model(inputs=G.input, outputs=output)
+        G_z = G(z)
+    else:
+      G_z = G(z)
+  G_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='G') + G.trainable_variables
 
   # Print G summary
   print('-' * 80)
@@ -97,8 +105,9 @@ def train(fps, args):
   print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
 
   # Summarize
-  tf_vocab = tf.constant(list(vocab.index), name='vocab')
-  tf.summary.text('labels', tf.gather(tf_vocab, y))
+  if args.use_conditioning:
+    tf_vocab = tf.constant(list(vocab.index), name='vocab')
+    tf.summary.text('labels', tf.gather(tf_vocab, y))
   tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
   tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
   G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
@@ -110,11 +119,8 @@ def train(fps, args):
 
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
-    if args.use_progressive_growing:
-      D_x = PWaveGANDiscriminator(x, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
-    else:
-      D_x = build_discriminator(x, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
-  D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
+    D_x = D(x)
+  D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D') + D.trainable_variables
 
   # Print D summary
   print('-' * 80)
@@ -130,10 +136,7 @@ def train(fps, args):
 
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
-    if args.use_progressive_growing:
-      D_G_z = PWaveGANDiscriminator(G_z, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
-    else:
-      D_G_z = build_discriminator(G_z, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+    D_G_z = D(G_z)
 
   # Create loss
   D_clip_weights = None
@@ -156,11 +159,13 @@ def train(fps, args):
     ))
 
     D_loss /= 2.
+
   elif args.wavegan_loss == 'lsgan':
     G_loss = tf.reduce_mean((D_G_z - 1.) ** 2)
     D_loss = tf.reduce_mean((D_x - 1.) ** 2)
     D_loss += tf.reduce_mean(D_G_z ** 2)
     D_loss /= 2.
+
   elif args.wavegan_loss == 'wgan':
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
@@ -176,6 +181,7 @@ def train(fps, args):
           )
         )
       D_clip_weights = tf.group(*clip_ops)
+
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
@@ -184,10 +190,7 @@ def train(fps, args):
     differences = G_z - x
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
-      if args.use_progressive_growing:
-        D_interp = PWaveGANDiscriminator(interpolates, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
-      else:
-        D_interp = build_discriminator(interpolates, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_interp = D(interpolates)
 
     LAMBDA = 10
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -195,6 +198,12 @@ def train(fps, args):
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
     gradient_penalty = tf.reduce_mean((slopes) ** 2.)
     D_loss += LAMBDA * gradient_penalty
+
+  elif args.wavegan_loss == 'hinge':
+    G_loss = -tf.reduce_mean(D_G_z)
+    D_loss =  tf.reduce_mean(tf.maximum(0., 1. - D_x))
+    D_loss += tf.reduce_mean(tf.maximum(0., 1. + D_G_z))
+
   else:
     raise NotImplementedError()
  
@@ -275,13 +284,15 @@ def train(fps, args):
         learning_rate=2e-4,
         beta1=0.0,
         beta2=0.9)
+  elif args.wavegan_loss == 'hinge':
+    G_opt = tf.train.AdamOptimizer(
+        learning_rate=1e-4,
+        beta1=0.0)
+    D_opt = tf.train.AdamOptimizer(
+        learning_rate=4e-4,
+        beta1=0.0)
   else:
     raise NotImplementedError()
-
-  # Optimizer internal state reset ops
-  if args.use_progressive_growing:
-    reset_G_opt_op = tf.variables_initializer(G_opt.variables())
-    reset_D_opt_op = tf.variables_initializer(D_opt.variables())
 
   # Gradient accumulation ops
   G_accum_grads = [tf.Variable(tf.zeros_like(G_var), trainable=False) for G_var in G_vars]
@@ -324,55 +335,23 @@ def train(fps, args):
       config=config) as sess:
     print('-' * 80)
     print('Training has started. Please use \'tensorboard --logdir={}\' to monitor.'.format(args.train_dir))
-    
-    # Get the summary writer for writing extra summary statistics
-    summary_writer = SummaryWriterCache.get(args.train_dir)
 
-    if args.use_progressive_growing:
-      cur_lod = 0
-      max_lod = 5
     while True:
-      if args.use_progressive_growing:
-        # Calculate Maximum LOD to train
-        step = sess.run(tf.train.get_or_create_global_step(), feed_dict={lod: cur_lod})
-        cur_lod = get_lod_at_step(step)
-        prev_lod = get_lod_at_step(step - 1)
-
-        # Reset optimizer internal state when new layers are introduced
-        if cur_lod < max_lod + 0.000005 and (np.floor(cur_lod) != np.floor(prev_lod) or np.ceil(cur_lod) != np.ceil(prev_lod)):
-          print("Resetting optimizers' internal states at step {}".format(step))
-          sess.run([reset_G_opt_op, reset_D_opt_op], feed_dict={lod: cur_lod})
-
-        # Output current LOD to tensorboard
-        lod_summary = tf.Summary(value=[
-          tf.Summary.Value(tag="current_lod", simple_value=float(cur_lod))
-        ])
-        summary_writer.add_summary(lod_summary, step)
-
       # Train discriminator
       for _ in range(args.wavegan_disc_nupdates):
         sess.run(D_zero_accum_ops)
         for _ in range(args.n_minibatches):
-          if args.use_progressive_growing:
-            sess.run(D_grad_accum_ops, feed_dict={lod: cur_lod})
-          else:
-            sess.run(D_grad_accum_ops)
+          sess.run(D_grad_accum_ops)
         sess.run(D_train_op)
 
         # Enforce Lipschitz constraint for WGAN
         if D_clip_weights is not None:
-          if args.use_progressive_growing:
-            sess.run(D_clip_weights, feed_dict={lod: cur_lod})
-          else:
-            sess.run(D_clip_weights)
+          sess.run(D_clip_weights)
 
       # Train generator
       sess.run(G_zero_accum_ops)
       for _ in range(args.n_minibatches):
-        if args.use_progressive_growing:
-          sess.run(G_grad_accum_ops, feed_dict={lod: cur_lod})
-        else:
-          sess.run(G_grad_accum_ops)
+        sess.run(G_grad_accum_ops)
       sess.run(G_train_op)
 
 
@@ -403,9 +382,17 @@ def train(fps, args):
     _G_z = sess.run(graph.get_tensor_by_name('G_z:0'), {z: _z})
 """
 def infer(args):
+  K.clear_session()
+  
   infer_dir = os.path.join(args.train_dir, 'infer')
   if not os.path.isdir(infer_dir):
     os.makedirs(infer_dir)
+
+  # Dummy values
+  x = tf.zeros([args.train_batch_size, args.data_slice_len, args.data_num_channels], dtype=tf.float32)
+  y = tf.zeros([args.train_batch_size], dtype=tf.int32)
+
+  vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
 
   # Subgraph that generates latent vectors
   samp_z_n = tf.placeholder(tf.int32, [], name='samp_z_n')
@@ -415,34 +402,38 @@ def infer(args):
   z = tf.placeholder(tf.float32, [None, args.wavegan_latent_dim], name='z')
   flat_pad = tf.placeholder(tf.int32, [], name='flat_pad')
 
-  if args.use_progressive_growing:
-    lod = tf.placeholder(tf.float32, shape=[], name='lod')
-
-  # Select model
-  if args.use_deep_resnet:
-    build_generator = DRWaveGANGenerator
-  elif args.use_resnet:
-    build_generator = RWaveGANGenerator
-  else:
-    build_generator = WaveGANGenerator
-
-  yembed = None
+  # Select input dimensions
   if args.use_conditioning:
-    yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
+    input_dim = args.wavegan_latent_dim + args.embedding_dim
+  else:
+    input_dim = args.wavegan_latent_dim
 
-  # Execute generator
+  nlabels = len(vocab) if args.use_conditioning else 1
+  if args.use_deep_resnet:
+    G = DRWaveGANGenerator([input_dim], train=False, **args.wavegan_g_kwargs)
+    D = DRWaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
+  elif args.use_resnet:
+    G = RWaveGANGenerator([input_dim], train=False, **args.wavegan_g_kwargs)
+    D = RWaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
+  else:
+    G = WaveGANGenerator([input_dim], train=False, **args.wavegan_g_kwargs)
+    D = WaveGANDiscriminator(x.shape[1:], labels=y, nlabels=nlabels, **args.wavegan_d_kwargs)
+
+  # Make generator
   with tf.variable_scope('G'):
+    # Create label embedding
     if args.use_conditioning:
-      vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
-      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
+      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=False)
+      yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
+      z = tf.concat([z, yembed], 1)
 
-    if args.use_progressive_growing:
-      G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=False, **args.wavegan_g_kwargs)
-    else:
-      G_z = build_generator(z, yembed=yembed, train=False, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
-        G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
+        output = tf.keras.layers.Conv1D(args.data_num_channels, args.wavegan_genr_pp_len, use_bias=False, padding='same')(G.output)
+        G = tf.keras.Model(inputs=G.input, outputs=output)
+        G_z = G(z)
+    else:
+      G_z = G(z)
   G_z = tf.identity(G_z, name='G_z')
 
   # Flatten batch
@@ -460,9 +451,20 @@ def infer(args):
   G_z_flat_int16 = float_to_int16(G_z_flat, name='G_z_flat_int16')
 
   # Create saver
-  G_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='G')
+  G_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='G') + G.variables + D.variables
   global_step = tf.train.get_or_create_global_step()
   saver = tf.train.Saver(G_vars + [global_step])
+
+  # Print G summary
+  # print('-' * 80)
+  # print('Generator vars')
+  # nparams = 0
+  # for v in G_vars:
+  #   v_shape = v.get_shape().as_list()
+  #   v_n = reduce(lambda x, y: x * y, v_shape)
+  #   nparams += v_n
+  #   print('{} ({}): {}'.format(v.get_shape().as_list(), v_n, v.name))
+  # print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
 
   # Export graph
   tf.train.write_graph(tf.get_default_graph(), infer_dir, 'infer.pbtxt')
@@ -475,7 +477,10 @@ def infer(args):
       saver_def=saver.as_saver_def())
 
   # Reset graph (in case training afterwards)
+  del G
+  del D
   tf.reset_default_graph()
+  K.clear_session()
 
 
 """
@@ -611,7 +616,7 @@ def incept(args):
   gan_G_z = gan_graph.get_tensor_by_name('G_z:0')[:, :, 0]
   gan_step = gan_graph.get_tensor_by_name('global_step:0')
   gan_embed_table = gan_graph.get_tensor_by_name('G/embed_table:0')
-  gan_yembed = gan_graph.get_tensor_by_name('yembed:0')
+  gan_yembed = gan_graph.get_tensor_by_name('G/yembed:0')
 
   # Load vocab
   if args.use_conditioning:
@@ -766,7 +771,7 @@ if __name__ == '__main__':
       help='Enable batchnorm')
   wavegan_args.add_argument('--wavegan_disc_nupdates', type=int,
       help='Number of discriminator updates per generator update')
-  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp'],
+  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp', 'hinge'],
       help='Which GAN loss to use')
   wavegan_args.add_argument('--wavegan_genr_upsample', type=str, choices=['zeros', 'nn'],
       help='Generator upsample strategy')
@@ -795,6 +800,8 @@ if __name__ == '__main__':
   wavegan_args.add_argument('--use_skip_z', action='store_true', dest='use_skip_z',
       help='Add skip connections from latent vector to every layer to fascilitate \
             better use of latent vector to generate features at mutliple scales')
+  wavegan_args.add_argument('--use_specnorm', action='store_true', dest='use_sn',
+      help='Enable spectral normalization to enforce 1 lipschitz condition directly on network parameters')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -855,7 +862,8 @@ if __name__ == '__main__':
     use_maxout=False,
     n_minibatches=1,
     use_ortho_init=False,
-    use_skip_z=False)
+    use_skip_z=False,
+    use_sn=False)
 
   args = parser.parse_args()
 
@@ -877,7 +885,8 @@ if __name__ == '__main__':
     'upsample': args.wavegan_genr_upsample,
     'use_maxout': args.use_maxout,
     'use_ortho_init': args.use_ortho_init,
-    'use_skip_z': args.use_skip_z
+    'use_skip_z': args.use_skip_z,
+    'use_sn': args.use_sn
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
@@ -885,7 +894,8 @@ if __name__ == '__main__':
     'use_batchnorm': args.wavegan_batchnorm,
     'phaseshuffle_rad': args.wavegan_disc_phaseshuffle,
     'use_maxout': args.use_maxout,
-    'use_ortho_init': args.use_ortho_init
+    'use_ortho_init': args.use_ortho_init,
+    'use_sn': args.use_sn
   })
 
   if args.mode == 'train':
