@@ -13,15 +13,15 @@ def power_iteration(W, u):
     '''
     Accroding the paper, we only need to do power iteration one time.
     '''
-    v = _l2normalize(K.dot(u, K.transpose(W)))
-    u = _l2normalize(K.dot(v, W))
+    v = _l2normalize(K.dot(W, u))
+    u = _l2normalize(K.dot(K.transpose(W), v))
     return u, v
 
 class DenseSN(Dense):
     def build(self, input_shape):
         super(DenseSN, self).build(input_shape)
 
-        self.u = self.add_weight(shape=tuple([1, self.kernel.shape.as_list()[-1]]),
+        self.u = self.add_weight(shape=tuple([self.kernel.shape.as_list()[-1], 1]),
                                  initializer=initializers.RandomNormal(0, 1),
                                  name='sn',
                                  trainable=False)
@@ -35,8 +35,8 @@ class DenseSN(Dense):
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
         # Calculate Sigma
         _u, _v = power_iteration(W_reshaped, self.u)
-        sigma = K.dot(_u, K.transpose(W_reshaped))
-        sigma = K.dot(sigma, K.transpose(_v))
+        sigma = K.dot(K.transpose(_v), W_reshaped)
+        sigma = K.dot(sigma, _u)
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
@@ -58,7 +58,7 @@ class ConvSN(Conv):
     def build(self, input_shape):
         super(ConvSN, self).build(input_shape)
 
-        self.u = self.add_weight(shape=tuple([1, self.kernel.shape.as_list()[-1]]),
+        self.u = self.add_weight(shape=tuple([self.kernel.shape.as_list()[-1], 1]),
                                  initializer=initializers.RandomNormal(0, 1),
                                  name='sn',
                                  trainable=False)
@@ -72,8 +72,8 @@ class ConvSN(Conv):
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
         # Calculate Sigma
         _u, _v = power_iteration(W_reshaped, self.u)
-        sigma = K.dot(_u, K.transpose(W_reshaped))
-        sigma = K.dot(sigma, K.transpose(_v))
+        sigma = K.dot(K.transpose(_v), W_reshaped)
+        sigma = K.dot(sigma, _u)
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
@@ -112,11 +112,11 @@ class EmbeddingSN(Embedding):
     def build(self, input_shape):
         super(EmbeddingSN, self).build(input_shape)
         
-        self.u = self.add_weight(shape=tuple([1, self.kernel.shape.as_list()[-1]]),
+        self.u = self.add_weight(shape=tuple([self.kernel.shape.as_list()[-1], 1]),
                                  initializer=initializers.RandomNormal(0, 1),
                                  name='sn',
                                  trainable=False)
-        
+
     def call(self, inputs, training=None):
         if training is None:
             training = K.learning_phase()
@@ -126,8 +126,8 @@ class EmbeddingSN(Embedding):
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
         # Calculate Sigma
         _u, _v = power_iteration(W_reshaped, self.u)
-        sigma = K.dot(_u, K.transpose(W_reshaped))
-        sigma = K.dot(sigma, K.transpose(_v))
+        sigma = K.dot(K.transpose(_v), W_reshaped)
+        sigma = K.dot(sigma, _u)
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
@@ -150,7 +150,7 @@ class ConvSN2DTranspose(Conv2DTranspose):
     def build(self, input_shape):
         super(ConvSN2DTranspose, self).build(input_shape)
 
-        self.u = self.add_weight(shape=tuple([1, self.kernel.shape.as_list()[-1]]),
+        self.u = self.add_weight(shape=tuple([self.kernel.shape.as_list()[-1], 1]),
                                  initializer=initializers.RandomNormal(0, 1),
                                  name='sn',
                                  trainable=False)
@@ -164,8 +164,8 @@ class ConvSN2DTranspose(Conv2DTranspose):
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
         # Calculate Sigma
         _u, _v = power_iteration(W_reshaped, self.u)
-        sigma = K.dot(_u, K.transpose(W_reshaped))
-        sigma = K.dot(sigma, K.transpose(_v))
+        sigma = K.dot(K.transpose(_v), W_reshaped)
+        sigma = K.dot(sigma, _u)
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
