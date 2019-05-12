@@ -140,13 +140,16 @@ def RWaveGANGenerator(
     output = which_conv(output, nch, kernel_len, strides=1, padding='same')
     output = tf.keras.layers.Activation('tanh')(output)
 
+  model = tf.keras.Model(inputs=z, outputs=output)
+
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope=tf.get_variable_scope().name)
-    # if slice_len == 16384:
-    #   assert len(update_ops) == 10
-    # else:
-    #   assert len(update_ops) == 12
+    update_ops = model.updates
+    print('Update Ops: {}'.format(len(update_ops)))
+    if slice_len == 16384:
+      assert len(update_ops) == 22
+    else:
+      assert len(update_ops) == 26
     with tf.control_dependencies(update_ops):
       output = Lambda(lambda x: tf.identity(x))(output)
 

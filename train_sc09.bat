@@ -6,7 +6,6 @@ python train_wavegan.py train .\train_sc09 ^
 --use_skip_z ^
 --use_specnorm ^
 --wavegan_loss hinge ^
---wavegan_batchnorm ^
 --data_first_slice ^
 --data_fast_wav ^
 --wavegan_disc_nupdates 1 ^

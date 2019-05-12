@@ -287,10 +287,12 @@ def train(fps, args):
   elif args.wavegan_loss == 'hinge':
     G_opt = tf.train.AdamOptimizer(
         learning_rate=1e-4,
-        beta1=0.0)
+        beta1=0.0,
+        beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=4e-4,
-        beta1=0.0)
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
   else:
     raise NotImplementedError()
 
@@ -309,25 +311,12 @@ def train(fps, args):
       global_step=tf.train.get_or_create_global_step())
   D_train_op = D_opt.apply_gradients([(D_accum_grads[i] / args.n_minibatches, grad_var[1]) for i, grad_var in enumerate(D_grad_vars)])
 
-  def np_lerp_clip(t, a, b):
-    return a + (b - a) * np.clip(t, 0.0, 1.0)
-
-  def get_lod_at_step(step):
-    lod_progress = step / 10000
-    return np.piecewise(lod_progress,
-                        [     lod_progress < 1, 1 <= lod_progress < 2,
-                         2 <= lod_progress < 3, 3 <= lod_progress < 4,
-                         4 <= lod_progress < 5, 5 <= lod_progress < 6],
-                        [3, lambda x: np_lerp_clip((x - 1), 3, 4), 
-                         4, lambda x: np_lerp_clip((x - 3), 4, 5),
-                         5, lambda x: np_lerp_clip((x - 5), 5, 6),
-                         6])
-
   # Dynamic memory allocation
   config = tf.ConfigProto()
   config.gpu_options.allow_growth = True
 
   # Run training
+  print('Starting monitored training session')
   with tf.train.MonitoredTrainingSession(
       checkpoint_dir=args.train_dir,
       save_checkpoint_secs=args.train_save_secs,
