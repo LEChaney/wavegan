@@ -1,4 +1,5 @@
 import tensorflow as tf
+from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import initializers
@@ -6,7 +7,7 @@ from tensorflow.python.keras.layers.convolutional import Conv
 from tensorflow.python.keras.layers import Dense, Conv2DTranspose, Embedding
 
 def _l2normalize(v, eps=1e-12):
-    return v / (K.sum(v ** 2) ** 0.5 + eps)
+    return v / (K.sqrt(K.sum(v ** 2)) + eps)
 
 def power_iteration(W, u):
     '''
@@ -32,20 +33,24 @@ class DenseSN(Dense):
         W_shape = self.kernel.shape.as_list()
         # Flatten the Tensor
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
-        _u, _v = power_iteration(W_reshaped, self.u)
         # Calculate Sigma
-        sigma=K.dot(_v, W_reshaped)
-        sigma=K.dot(sigma, K.transpose(_u))
+        _u, _v = power_iteration(W_reshaped, self.u)
+        sigma = K.dot(_u, K.transpose(W_reshaped))
+        sigma = K.dot(sigma, K.transpose(_v))
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
         if training in {0, False}:
             W_bar = K.reshape(W_bar, W_shape)
         else:
-            with tf.control_dependencies([self.u.assign(_u)]):
+            with ops.control_dependencies([self.u.assign(_u)]):
                  W_bar = K.reshape(W_bar, W_shape)
         # Update weight tensor
         self.kernel = W_bar
+
+        # Check convergence
+        # s, _, _ = tf.svd(W_reshaped)
+        # tf.summary.scalar('Sigma Error', tf.squeeze(tf.abs(s[0] - sigma) / s[0]))
 
         return super(DenseSN, self).call(inputs)
         
@@ -65,20 +70,24 @@ class ConvSN(Conv):
         W_shape = self.kernel.shape.as_list()
         # Flatten the Tensor
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
-        _u, _v = power_iteration(W_reshaped, self.u)
         # Calculate Sigma
-        sigma=K.dot(_v, W_reshaped)
-        sigma=K.dot(sigma, K.transpose(_u))
+        _u, _v = power_iteration(W_reshaped, self.u)
+        sigma = K.dot(_u, K.transpose(W_reshaped))
+        sigma = K.dot(sigma, K.transpose(_v))
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
         if training in {0, False}:
             W_bar = K.reshape(W_bar, W_shape)
         else:
-            with tf.control_dependencies([self.u.assign(_u)]):
-                W_bar = K.reshape(W_bar, W_shape)
+            with ops.control_dependencies([self.u.assign(_u)]):
+                 W_bar = K.reshape(W_bar, W_shape)
         # Update weight tensor
         self.kernel = W_bar
+
+        # Check convergence
+        # s, _, _ = tf.svd(W_reshaped)
+        # tf.summary.scalar('Sigma Error', tf.squeeze(tf.abs(s[0] - sigma) / s[0]))
 
         return super(ConvSN, self).call(inputs)
 
@@ -103,32 +112,36 @@ class EmbeddingSN(Embedding):
     def build(self, input_shape):
         super(EmbeddingSN, self).build(input_shape)
         
-        self.u = self.add_weight(shape=tuple([1, self.embeddings.shape.as_list()[-1]]),
-                         initializer=initializers.RandomNormal(0, 1),
-                         name='sn',
-                         trainable=False)
+        self.u = self.add_weight(shape=tuple([1, self.kernel.shape.as_list()[-1]]),
+                                 initializer=initializers.RandomNormal(0, 1),
+                                 name='sn',
+                                 trainable=False)
         
     def call(self, inputs, training=None):
         if training is None:
             training = K.learning_phase()
 
-        W_shape = self.embeddings.shape.as_list()
+        W_shape = self.kernel.shape.as_list()
         # Flatten the Tensor
-        W_reshaped = K.reshape(self.embeddings, [-1, W_shape[-1]])
-        _u, _v = self.power_iteration(W_reshaped, self.u)
+        W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
         # Calculate Sigma
-        sigma=K.dot(_v, W_reshaped)
-        sigma=K.dot(sigma, K.transpose(_u))
+        _u, _v = power_iteration(W_reshaped, self.u)
+        sigma = K.dot(_u, K.transpose(W_reshaped))
+        sigma = K.dot(sigma, K.transpose(_v))
         # Normalize it
         W_bar = W_reshaped / sigma
-        # Teshape weight tensor
+        # Reshape weight tensor
         if training in {0, False}:
             W_bar = K.reshape(W_bar, W_shape)
         else:
-            with tf.control_dependencies([self.u.assign(_u)]):
-                W_bar = K.reshape(W_bar, W_shape)
+            with ops.control_dependencies([self.u.assign(_u)]):
+                 W_bar = K.reshape(W_bar, W_shape)
         # Update weight tensor
-        self.embeddings = W_bar
+        self.kernel = W_bar
+
+        # Check convergence
+        # s, _, _ = tf.svd(W_reshaped)
+        # tf.summary.scalar('Sigma Error', tf.squeeze(tf.abs(s[0] - sigma) / s[0]))
             
         return super(EmbeddingSN, self).call(inputs)
 
@@ -149,19 +162,23 @@ class ConvSN2DTranspose(Conv2DTranspose):
         W_shape = self.kernel.shape.as_list()
         # Flatten the Tensor
         W_reshaped = K.reshape(self.kernel, [-1, W_shape[-1]])
-        _u, _v = power_iteration(W_reshaped, self.u)
         # Calculate Sigma
-        sigma=K.dot(_v, W_reshaped)
-        sigma=K.dot(sigma, K.transpose(_u))
+        _u, _v = power_iteration(W_reshaped, self.u)
+        sigma = K.dot(_u, K.transpose(W_reshaped))
+        sigma = K.dot(sigma, K.transpose(_v))
         # Normalize it
         W_bar = W_reshaped / sigma
         # Reshape weight tensor
         if training in {0, False}:
             W_bar = K.reshape(W_bar, W_shape)
         else:
-            with tf.control_dependencies([self.u.assign(_u)]):
-                W_bar = K.reshape(W_bar, W_shape)
+            with ops.control_dependencies([self.u.assign(_u)]):
+                 W_bar = K.reshape(W_bar, W_shape)
         # Update weight tensor
         self.kernel = W_bar
+
+        # Check convergence
+        # s, _, _ = tf.svd(W_reshaped)
+        # tf.summary.scalar('Sigma Error', tf.squeeze(tf.abs(s[0] - sigma) / s[0]))
 
         return super(ConvSN2DTranspose, self).call(inputs)
