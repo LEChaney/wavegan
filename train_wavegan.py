@@ -70,19 +70,36 @@ def train(fps, args):
     build_discriminator = WaveGANDiscriminator
   
   # Make generator
-  with tf.variable_scope('G'):
-    # Create label embedding
-    if args.use_conditioning:
-      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
-      yembed = tf.nn.embedding_lookup(embedding_table, y)
+  for _macro_patch_idx in range(args.n_macro_patches):
+    for _micro_patch_idx in range(args.n_micro_patches):
+      with tf.variable_scope('G', reuse=_macro_patch_idx != 0 or _micro_patch_idx != 0):
+        # Create label embedding
+        if args.use_conditioning:
+          embedding_table = tf.get_variable('embed_table', shape=[len(vocab), args.embedding_dim], initializer=tf.random_normal_initializer, trainable=True)
+          yembed = tf.nn.embedding_lookup(embedding_table, y)
+        
+        # Add patch coordinate conditioning
+        if args.n_macro_patches > 1 or args.n_micro_patches > 1:
+          macro_patch_idx = _macro_patch_idx / (args.n_macro_patches - 1) * 2 - 1
+          macro_patch_idx = tf.constant(macro_patch_idx, shape=[args.train_batch_size, 1])
+          micro_patch_idx = _micro_patch_idx / (args.n_micro_patches - 1) * 2 - 1
+          micro_patch_idx = tf.constant(micro_patch_idx, shape=[args.train_batch_size, 1])
+          if yembed is not None:
+            yembed = tf.concat([yembed, macro_patch_idx, micro_patch_idx], -1)
+          else:
+            yembed = tf.concat([macro_patch_idx, micro_patch_idx], -1)
 
-    if args.use_progressive_growing:
-      G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
-    else:
-      G_z = build_generator(z, yembed=yembed, train=True, **args.wavegan_g_kwargs)
-    if args.wavegan_genr_pp:
-      with tf.variable_scope('pp_filt'):
-        G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
+        if args.use_progressive_growing:
+          _G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
+        else:
+          _G_z = build_generator(z, yembed=yembed, train=True, **args.wavegan_g_kwargs)
+        if args.wavegan_genr_pp:
+          with tf.variable_scope('pp_filt'):
+            _G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
+        if _micro_patch_idx == 0:
+          G_z = _G_z
+        else:
+          G_z = tf.concat([G_z, _G_z], 1)
   G_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='G')
 
   # Print G summary
@@ -100,13 +117,32 @@ def train(fps, args):
   tf_vocab = tf.constant(list(vocab.index), name='vocab')
   tf.summary.text('labels', tf.gather(tf_vocab, y))
   tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
-  tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
+  for macro_patch_idx in range(args.n_macro_patches):
+    tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
   G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
   x_rms = tf.sqrt(tf.reduce_mean(tf.square(x[:, :, 0]), axis=1))
   tf.summary.histogram('x_rms_batch', x_rms)
   tf.summary.histogram('G_z_rms_batch', G_z_rms)
   tf.summary.scalar('x_rms', tf.reduce_mean(x_rms))
   tf.summary.scalar('G_z_rms', tf.reduce_mean(G_z_rms))
+
+  # Select random macro patch from audio clip to train on.
+  # Discriminator currently hard coded to work on 4 * macro patch size
+  macro_patch_size = args.data_slice_len // args.n_macro_patches
+  macro_patch_idx = tf.random_uniform([args.train_batch_size], maxval=args.n_macro_patches - 3, dtype=tf.int32)
+  for i in range(args.train_batch_size):
+    x_sample = tf.expand_dims(x[i, macro_patch_idx[i] * macro_patch_size : (macro_patch_idx[i] + 4) * macro_patch_size], 0)
+    G_z_sample = tf.expand_dims(G_z[i, macro_patch_idx[i] * macro_patch_size : (macro_patch_idx[i] + 4) * macro_patch_size], 0)
+    if i == 0:
+      x_batch = x_sample
+      G_z_batch = G_z_sample
+    else:
+      x_batch = tf.concat([x_batch, x_sample], 0)
+      G_z_batch = tf.concat([G_z_batch, G_z_sample], 0)
+  x = x_batch
+  G_z = G_z_batch
+  x.set_shape([None, macro_patch_size * 4, args.data_num_channels])
+  G_z.set_shape([None, macro_patch_size * 4, args.data_num_channels])
 
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
@@ -795,6 +831,10 @@ if __name__ == '__main__':
   wavegan_args.add_argument('--use_skip_z', action='store_true', dest='use_skip_z',
       help='Add skip connections from latent vector to every layer to fascilitate \
             better use of latent vector to generate features at mutliple scales')
+  wavegan_args.add_argument('--n_macro_patches', type=int,
+      help='Number of macro patches to use for generating each audio clip')
+  wavegan_args.add_argument('--n_micro_patches', type=int,
+      help='Number of micro patches to use to generate each macro patch')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -855,7 +895,9 @@ if __name__ == '__main__':
     use_maxout=False,
     n_minibatches=1,
     use_ortho_init=False,
-    use_skip_z=False)
+    use_skip_z=False,
+    n_macro_patches=8,
+    n_micro_patches=8)
 
   args = parser.parse_args()
 
@@ -877,7 +919,8 @@ if __name__ == '__main__':
     'upsample': args.wavegan_genr_upsample,
     'use_maxout': args.use_maxout,
     'use_ortho_init': args.use_ortho_init,
-    'use_skip_z': args.use_skip_z
+    'use_skip_z': args.use_skip_z,
+    'n_macro_patches': args.n_macro_patches
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
