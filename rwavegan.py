@@ -19,7 +19,8 @@ def RWaveGANGenerator(
     use_maxout=False,
     use_ortho_init=False,
     use_skip_z=False,
-    n_macro_patches=1):
+    n_macro_patches=1,
+    n_micro_patches=1):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
 
@@ -68,8 +69,8 @@ def RWaveGANGenerator(
   output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, 16 // n_macro_patches * dim * dim_mul, kernel_initializer=kernel_initializer)
-    output = tf.reshape(output, [batch_size, 16 // n_macro_patches, dim * dim_mul])
+    output = tf.layers.dense(output, 16 // n_macro_patches // n_micro_patches * dim * dim_mul, kernel_initializer=kernel_initializer)
+    output = tf.reshape(output, [batch_size, 16 // n_macro_patches // n_micro_patches, dim * dim_mul])
   dim_mul //= 2
 
   # Layer 0
