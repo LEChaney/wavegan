@@ -336,7 +336,7 @@ def train(fps, args):
   # Get spectral norm update ops. Filter by D_x variable scopes to avoid
   # updating the discriminator weights twice via D_G_z update ops.
   G_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='G')
-  D_spec_norm_update_ops += tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='D_x')
+  D_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='D_x')
   print("Generator spectral norm update ops:")
   for update_ops in G_spec_norm_update_ops:
     print(update_ops)
