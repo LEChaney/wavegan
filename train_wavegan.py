@@ -14,6 +14,7 @@ import tensorflow as tf
 from tensorflow.python.training.summary_io import SummaryWriterCache
 from six.moves import xrange
 
+import ops
 import loader
 from wavegan import WaveGANGenerator, WaveGANDiscriminator
 from progressive_wavegan import PWaveGANGenerator, PWaveGANDiscriminator
@@ -156,11 +157,13 @@ def train(fps, args):
     ))
 
     D_loss /= 2.
+
   elif args.wavegan_loss == 'lsgan':
     G_loss = tf.reduce_mean((D_G_z - 1.) ** 2)
     D_loss = tf.reduce_mean((D_x - 1.) ** 2)
     D_loss += tf.reduce_mean(D_G_z ** 2)
     D_loss /= 2.
+
   elif args.wavegan_loss == 'wgan':
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
@@ -176,6 +179,7 @@ def train(fps, args):
           )
         )
       D_clip_weights = tf.group(*clip_ops)
+
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
@@ -195,6 +199,12 @@ def train(fps, args):
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
     gradient_penalty = tf.reduce_mean((slopes) ** 2.)
     D_loss += LAMBDA * gradient_penalty
+  
+  elif args.wavegan_loss == 'hinge':
+    G_loss = -tf.reduce_mean(D_G_z)
+    D_loss =  tf.reduce_mean(tf.maximum(0., 1. - D_x))
+    D_loss += tf.reduce_mean(tf.maximum(0., 1. + D_G_z))
+
   else:
     raise NotImplementedError()
  
@@ -275,6 +285,13 @@ def train(fps, args):
         learning_rate=2e-4,
         beta1=0.0,
         beta2=0.9)
+  elif args.wavegan_loss == 'hinge':
+    G_opt = tf.train.AdamOptimizer(
+        learning_rate=1e-4,
+        beta1=0.0)
+    D_opt = tf.train.AdamOptimizer(
+        learning_rate=4e-4,
+        beta1=0.0)
   else:
     raise NotImplementedError()
 
@@ -315,6 +332,8 @@ def train(fps, args):
   # Dynamic memory allocation
   config = tf.ConfigProto()
   config.gpu_options.allow_growth = True
+
+  spectral_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS)
 
   # Run training
   with tf.train.MonitoredTrainingSession(
@@ -366,6 +385,10 @@ def train(fps, args):
           else:
             sess.run(D_clip_weights)
 
+        # Update spectral norms
+        for update_op in spectral_norm_update_ops:
+          sess.run(update_op)
+
       # Train generator
       sess.run(G_zero_accum_ops)
       for _ in range(args.n_minibatches):
@@ -374,6 +397,10 @@ def train(fps, args):
         else:
           sess.run(G_grad_accum_ops)
       sess.run(G_train_op)
+
+      # Update spectral norms
+      for update_op in spectral_norm_update_ops:
+        sess.run(update_op)
 
 
 """
@@ -766,7 +793,7 @@ if __name__ == '__main__':
       help='Enable batchnorm')
   wavegan_args.add_argument('--wavegan_disc_nupdates', type=int,
       help='Number of discriminator updates per generator update')
-  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp'],
+  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp', 'hinge'],
       help='Which GAN loss to use')
   wavegan_args.add_argument('--wavegan_genr_upsample', type=str, choices=['zeros', 'nn'],
       help='Generator upsample strategy')
@@ -795,6 +822,8 @@ if __name__ == '__main__':
   wavegan_args.add_argument('--use_skip_z', action='store_true', dest='use_skip_z',
       help='Add skip connections from latent vector to every layer to fascilitate \
             better use of latent vector to generate features at mutliple scales')
+  wavegan_args.add_argument('--use_spec_norm', action='store_true', dest='use_spec_norm',
+      help='Apply spectral normalization to every weight tensor in or to preserve lipchitz 1 constraint')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -855,7 +884,8 @@ if __name__ == '__main__':
     use_maxout=False,
     n_minibatches=1,
     use_ortho_init=False,
-    use_skip_z=False)
+    use_skip_z=False,
+    use_spec_norm=False)
 
   args = parser.parse_args()
 
@@ -877,7 +907,8 @@ if __name__ == '__main__':
     'upsample': args.wavegan_genr_upsample,
     'use_maxout': args.use_maxout,
     'use_ortho_init': args.use_ortho_init,
-    'use_skip_z': args.use_skip_z
+    'use_skip_z': args.use_skip_z,
+    'use_spec_norm': args.use_spec_norm
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
@@ -885,7 +916,8 @@ if __name__ == '__main__':
     'use_batchnorm': args.wavegan_batchnorm,
     'phaseshuffle_rad': args.wavegan_disc_phaseshuffle,
     'use_maxout': args.use_maxout,
-    'use_ortho_init': args.use_ortho_init
+    'use_ortho_init': args.use_ortho_init,
+    'use_spec_norm': args.use_spec_norm
   })
 
   if args.mode == 'train':
