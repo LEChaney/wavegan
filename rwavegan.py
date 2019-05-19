@@ -75,6 +75,13 @@ def RWaveGANGenerator(
                           kernel_initializer=kernel_initializer,
                           use_sn=use_spec_norm)
 
+  def res_block(inputs, filters):
+    return residual_block(inputs, filters, kernel_len,
+                          normalization=normalization,
+                          activation=activation,
+                          kernel_initializer=kernel_initializer,
+                          use_sn=use_spec_norm)
+
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   output = z
@@ -82,7 +89,6 @@ def RWaveGANGenerator(
   with tf.variable_scope('z_project'):
     output = which_dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
-  dim_mul //= 2
 
   # Layer 0
   # [16, 1024] -> [64, 512]
@@ -94,7 +100,6 @@ def RWaveGANGenerator(
   # [64, 512] -> [256, 256]
   with tf.variable_scope('upconv_1'):
     output = up_res_block(output, dim * dim_mul)
-  dim_mul //= 2
 
   # Layer 2
   # [256, 256] -> [1024, 128]
@@ -106,34 +111,44 @@ def RWaveGANGenerator(
   # [1024, 128] -> [4096, 64]
   with tf.variable_scope('upconv_3'):
     output = up_res_block(output, dim * dim_mul)
+  dim_mul //= 2
 
   if slice_len == 16384:
     # Layer 4
     # [4096, 64] -> [16384, 32]
     with tf.variable_scope('upconv_4'):
-      output = up_res_block(output, dim // 2)
+      output = up_res_block(output, dim * dim_mul)
+
+    with tf.variable_scope('final_res'):
+      output = res_block(output, dim)
 
   elif slice_len == 32768:
     # Layer 4
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
-      output = up_res_block(output, dim)
+      output = up_res_block(output, dim * dim_mul)
 
     # Layer 5
     # [16384, 64] -> [32768, 32]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, dim // 2, stride=2)
+      output = up_res_block(output, dim, stride=2)
+
+    with tf.variable_scope('final_res'):
+      output = res_block(output, dim)
 
   elif slice_len == 65536:
     # Layer 4
     # [4096, 128] -> [16384, 64]
     with tf.variable_scope('upconv_4'):
-      output = up_res_block(output, dim)
+      output = up_res_block(output, dim * dim_mul)
 
     # Layer 5
     # [16384, 64] -> [65536, nch]
     with tf.variable_scope('upconv_5'):
-      output = up_res_block(output, dim // 2)
+      output = up_res_block(output, dim)
+
+    with tf.variable_scope('final_res'):
+      output = res_block(output, dim)
 
   # To audio layer
   # [16384, 32] -> [16384, nch]
@@ -146,10 +161,10 @@ def RWaveGANGenerator(
   # Automatically update batchnorm moving averages every time G is used during training
   if train and use_batchnorm:
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope=tf.get_variable_scope().name)
-    if slice_len == 16384:
-      assert len(update_ops) == 22
-    else:
-      assert len(update_ops) == 26
+    # if slice_len == 16384:
+    #   assert len(update_ops) == 22
+    # else:
+    #   assert len(update_ops) == 26
     with tf.control_dependencies(update_ops):
       output = tf.identity(output)
 
@@ -223,26 +238,35 @@ def RWaveGANDiscriminator(
                           kernel_initializer=kernel_initializer,
                           use_sn=use_spec_norm)
 
+  def res_block_no_ph(inputs, filters):
+    return residual_block(inputs, filters, kernel_len,
+                          normalization=batchnorm,
+                          phaseshuffle=lambda x: x,
+                          activation=activation,
+                          kernel_initializer=kernel_initializer,
+                          use_sn=use_spec_norm)
+
+
   # From audio layer
   # [16384, nch] -> [16384, 32]
   output = x
   with tf.variable_scope('from_audio'):
-    output = which_conv(output, dim // 2, kernel_len, strides=1, padding='same')
+    output = which_conv(output, dim, kernel_len, strides=1, padding='same')
 
   # Layer 0
   # [16384, 32] -> [4096, 64]
   with tf.variable_scope('downconv_0'):
-    output = down_res_block(output, dim)
+    output = down_res_block(output, dim * 2)
 
   # Layer 1
   # [4096, 64] -> [1024, 128]
   with tf.variable_scope('downconv_1'):
-    output = down_res_block(output, dim * 2)
+    output = down_res_block(output, dim * 4)
 
   # Layer 2
   # [1024, 128] -> [256, 256]
   with tf.variable_scope('downconv_2'):
-    output = down_res_block(output, dim * 4)
+    output = down_res_block(output, dim * 8)
 
   # Layer 3
   # [256, 256] -> [64, 512]
@@ -254,16 +278,35 @@ def RWaveGANDiscriminator(
   with tf.variable_scope('downconv_4'):
     output = down_res_block(output, dim * 16)
 
-  if slice_len == 32768:
+  if slice_len == 16384:
+    # Layer 5
+    # [16, 1024] -> [16, 1024]
+    with tf.variable_scope('final_res'):
+      output = res_block_no_ph(output, dim * 16)
+
+  elif slice_len == 32768:
     # Layer 5
     # [32, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
       output = down_res_block_no_ph(output, dim * 32, stride=2)
+
+    # Layer 6
+    # [16, 2048] -> [16, 2048]
+    with tf.variable_scope('final_res'):
+      output = res_block_no_ph(output, dim * 32)
+
   elif slice_len == 65536:
     # Layer 5
     # [64, 1024] -> [16, 2048]
     with tf.variable_scope('downconv_5'):
       output = down_res_block_no_ph(output, dim * 32)
+
+    # Layer 6
+    # [16, 2048] -> [16, 2048]
+    with tf.variable_scope('final_res'):
+      output = res_block_no_ph(output, dim * 32)
+  
+
   
   # Activate final layer
   output = batchnorm(output)
