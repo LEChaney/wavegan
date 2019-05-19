@@ -333,7 +333,16 @@ def train(fps, args):
   config = tf.ConfigProto()
   config.gpu_options.allow_growth = True
 
-  spectral_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS)
+  # Get spectral norm update ops. Filter by D_x variable scopes to avoid
+  # updating the discriminator weights twice via D_G_z update ops.
+  G_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='G')
+  D_spec_norm_update_ops += tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='D_x')
+  print("Generator spectral norm update ops:")
+  for update_ops in G_spec_norm_update_ops:
+    print(update_ops)
+  print("Discriminator spectral norm update ops:")
+  for update_ops in D_spec_norm_update_ops:
+    print(update_ops)
 
   # Run training
   with tf.train.MonitoredTrainingSession(
@@ -385,8 +394,8 @@ def train(fps, args):
           else:
             sess.run(D_clip_weights)
 
-        # Update spectral norms
-        for update_op in spectral_norm_update_ops:
+        # Update discriminator weights spectral norms
+        for update_op in D_spec_norm_update_ops:
           sess.run(update_op)
 
       # Train generator
@@ -398,8 +407,8 @@ def train(fps, args):
           sess.run(G_grad_accum_ops)
       sess.run(G_train_op)
 
-      # Update spectral norms
-      for update_op in spectral_norm_update_ops:
+      # Update generator weights spectral norms
+      for update_op in G_spec_norm_update_ops:
         sess.run(update_op)
 
 

@@ -4,6 +4,7 @@ python train_wavegan.py train .\train_sc09 ^
 --use_ortho_init ^
 --use_conditioning ^
 --use_skip_z ^
+--wavegan_batchnorm ^
 --use_spec_norm ^
 --data_first_slice ^
 --data_fast_wav ^

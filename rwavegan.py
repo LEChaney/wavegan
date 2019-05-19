@@ -188,7 +188,7 @@ def RWaveGANDiscriminator(
     activation = lrelu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
+    batchnorm = lambda x: x #tf.layers.batch_normalization(x, training=True)
   else:
     batchnorm = lambda x: x
 

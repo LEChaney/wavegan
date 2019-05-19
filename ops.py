@@ -89,7 +89,7 @@ def dense_sn(
   # Init weight tensor
   if kernel_initializer is None:
     kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.Variable(kernel_initializer()([inputs.shape.as_list()[-1], units]), name='W', dtype=tf.float32)
+  W = tf.get_variable('W', shape=[inputs.shape.as_list()[-1], units], initializer=kernel_initializer, dtype=tf.float32)
 
   # Get spectral normalized weight tensor
   W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
@@ -99,7 +99,7 @@ def dense_sn(
 
   # Add bias
   if use_bias:
-    output += tf.Variable(tf.zeros([output.shape.as_list()[-1]]), name='b', dtype=tf.float32)
+    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
     
   return output
 
@@ -115,7 +115,7 @@ def conv1d_sn(
   # Init weight tensor
   if kernel_initializer is None:
     kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.Variable(kernel_initializer()([kernel_size, inputs.shape.as_list()[-1], filters]), name='W', dtype=tf.float32)
+  W = tf.get_variable('W', shape=[kernel_size, inputs.shape.as_list()[-1], filters], initializer=kernel_initializer, dtype=tf.float32)
 
   # Get spectral normalized weight tensor
   W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
@@ -125,7 +125,7 @@ def conv1d_sn(
 
   # Add bias
   if use_bias:
-    output += tf.Variable(tf.zeros([output.shape.as_list()[-1]]), name='b', dtype=tf.float32)
+    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
 
   return output
 
@@ -140,7 +140,7 @@ def conv2d_transpose_sn(
   # Init weight tensor
   if kernel_initializer is None:
     kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.Variable(kernel_initializer()(list(kernel_size) + [filters, inputs.shape.as_list()[-1]]), name='W', dtype=tf.float32)
+  W = tf.get_variable('W', shape=list(kernel_size) + [filters, inputs.shape.as_list()[-1]], initializer=kernel_initializer, dtype=tf.float32)
 
   # Get spectral normalized weight tensor
   W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
@@ -153,7 +153,7 @@ def conv2d_transpose_sn(
 
   # Add bias
   if use_bias:
-    output += tf.Variable(tf.zeros([output.shape.as_list()[-1]]), name='b', dtype=tf.float32)
+    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
 
   return output
 
