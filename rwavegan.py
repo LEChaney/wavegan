@@ -24,6 +24,7 @@ def RWaveGANGenerator(
     use_spec_norm=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
+  use_spec_norm = False
 
   # Select initialization method
   if use_ortho_init:
@@ -58,12 +59,12 @@ def RWaveGANGenerator(
     else:
       normalization = lambda x: x
 
-  # if use_spec_norm:
-  #   which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
-  #   which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
-  # else:
-  which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
-  which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
+  if use_spec_norm:
+    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
+    which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
+  else:
+    which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
+    which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
 
   def up_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len, 
@@ -79,7 +80,7 @@ def RWaveGANGenerator(
   output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    output = which_dense(output, 4 * 4 * dim * dim_mul)
+    output = which_dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
   dim_mul //= 2
 
@@ -268,19 +269,17 @@ def RWaveGANDiscriminator(
   output = batchnorm(output)
   output = activation(output)
 
-  # Global pooling
-  # [16, 1024] -> [1024]
-  with tf.variable_scope('global_pool'):
-    pool = tf.reduce_sum(output, axis=1)
+  # Flatten
+  output = tf.reshape(output, [batch_size, -1])
 
   # Connect to single logit
   with tf.variable_scope('output'):
-      output = which_dense(pool, 1)[:, 0]
-
-      if y is not None:
-        embed_size = pool.shape.as_list()[-1]
-        yembed = embed_sn(y, n_labels, embed_size, kernel_initializer=kernel_initializer)
-        output += tf.reduce_sum(yembed * pool, axis=1)
+    if y is not None:
+      output = which_dense(output, n_labels)
+      indices = tf.range(tf.shape(output)[0])
+      output = tf.gather_nd(output, tf.stack([indices, y], -1))
+    else:
+      output = which_dense(output, 1)[:, 0]
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 
