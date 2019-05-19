@@ -278,8 +278,9 @@ def z_to_gain_bias(z, out_features, kernel_initializer=tf.initializers.orthogona
 
 
 def conditional_batchnorm(inputs, z, training=False, kernel_initializer=tf.initializers.orthogonal, use_sn=False):
-  gain, bias = z_to_gain_bias(z, inputs.shape.as_list()[-1], kernel_initializer=kernel_initializer, use_sn=use_sn)
-  return gain * tf.layers.batch_normalization(inputs, training=training, center=False, scale=False) + bias
+  with tf.variable_scope('cbn'):
+    gain, bias = z_to_gain_bias(z, inputs.shape.as_list()[-1], kernel_initializer=kernel_initializer, use_sn=use_sn)
+    return gain * tf.layers.batch_normalization(inputs, training=training, center=False, scale=False) + bias
 
 
 def residual_block(inputs, 

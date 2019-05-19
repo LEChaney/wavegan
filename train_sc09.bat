@@ -1,6 +1,6 @@
 python train_wavegan.py train .\train_sc09 ^
 --data_dir .\data\sc09\train ^
---use_resnet ^
+--use_deep_resnet ^
 --use_ortho_init ^
 --use_conditioning ^
 --use_skip_z ^
@@ -10,7 +10,7 @@ python train_wavegan.py train .\train_sc09 ^
 --data_fast_wav ^
 --wavegan_genr_upsample nn ^
 --wavegan_loss hinge ^
---wavegan_disc_nupdates 1 ^
+--wavegan_disc_nupdates 2 ^
 --wavegan_disc_phaseshuffle 0 ^
 --wavegan_latent_dim 100 ^
 --embedding_dim 100 ^
