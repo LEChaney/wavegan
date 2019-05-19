@@ -58,12 +58,12 @@ def RWaveGANGenerator(
     else:
       normalization = lambda x: x
 
-  if use_spec_norm:
-    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
-    which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
-  else:
-    which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
-    which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
+  # if use_spec_norm:
+  #   which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
+  #   which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
+  # else:
+  which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
+  which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
 
   def up_res_block(inputs, filters, stride=4):
     return residual_block(inputs, filters, kernel_len, 
@@ -79,7 +79,7 @@ def RWaveGANGenerator(
   output = z
   dim_mul = 16 if slice_len == 16384 else 32
   with tf.variable_scope('z_project'):
-    output = which_dense(output, 4 * 4 * dim * dim_mul, kernel_initializer=kernel_initializer)
+    output = which_dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
   dim_mul //= 2
 

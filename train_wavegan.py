@@ -69,12 +69,13 @@ def train(fps, args):
   else:
     build_generator = WaveGANGenerator
     build_discriminator = WaveGANDiscriminator
-
+  
   # Make generator
   with tf.variable_scope('G'):
     # Create label embedding
     if args.use_conditioning:
-      yembed = ops.embed_sn(y, len(vocab), args.embedding_dim)
+      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
+      yembed = tf.nn.embedding_lookup(embedding_table, y)
 
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
@@ -286,11 +287,13 @@ def train(fps, args):
         beta2=0.9)
   elif args.wavegan_loss == 'hinge':
     G_opt = tf.train.AdamOptimizer(
-        learning_rate=1e-4,
-        beta1=0.0)
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=4e-4,
-        beta1=0.0)
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
   else:
     raise NotImplementedError()
 
@@ -466,8 +469,8 @@ def infer(args):
     yembed = None
     if args.use_conditioning:
       yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
-      embedding_table = ops.get_embed_table_sn(len(vocab), args.embedding_dim, table_name='embed_table', kernel_initializer=tf.initializers.orthogonal)
-      embedding_table = tf.identity(embedding_table, name='embed_table')
+      vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
+      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
 
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=False, **args.wavegan_g_kwargs)

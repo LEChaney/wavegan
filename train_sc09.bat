@@ -8,12 +8,13 @@ python train_wavegan.py train .\train_sc09 ^
 --use_spec_norm ^
 --data_first_slice ^
 --data_fast_wav ^
+--wavegan_genr_upsample nn ^
 --wavegan_loss hinge ^
 --wavegan_disc_nupdates 1 ^
---wavegan_disc_phaseshuffle 1 ^
+--wavegan_disc_phaseshuffle 0 ^
 --wavegan_latent_dim 100 ^
 --embedding_dim 100 ^
---wavegan_kernel_len 25 ^
+--wavegan_kernel_len 9 ^
 --wavegan_dim 64 ^
 --train_batch_size 64 ^
 --n_minibatches 1 ^
