@@ -248,18 +248,22 @@ def RWaveGANDiscriminator(
   output = batchnorm(output)
   output = activation(output)
 
+  # Global pooling
+  # [16, 1024] -> [1024]
+  with tf.variable_scope('global_pool'):
+    hidden = tf.reduce_sum(output, axis=[1])
+
   # Flatten
-  output = tf.reshape(output, [batch_size, -1])
+  output = tf.reshape(hidden, [batch_size, -1])
 
   # Connect to single logit
   with tf.variable_scope('output'):
+    output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
+
     if labels is not None:
-      output = tf.layers.dense(output, nlabels, kernel_initializer=kernel_initializer)
-      indices = tf.range(tf.shape(output)[0])
-      output = tf.gather_nd(output, tf.stack([indices, labels], -1))
-    else:
-      output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
+      embedding_table = tf.get_variable('embed_table', shape=[nlabels, hidden.shape[1]], initializer=kernel_initializer, trainable=True)
+      yembed = tf.nn.embedding_lookup(embedding_table, labels)
 
-  # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
+      output += tf.reduce_sum(yembed * hidden, axis=1)
 
-  return output
+    return output, hidden
