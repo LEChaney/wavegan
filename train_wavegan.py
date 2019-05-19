@@ -125,7 +125,7 @@ def train(fps, args):
   tf.summary.text('labels', tf.gather(tf_vocab, y))
   tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
   tf.summary.audio('G_z', G_z_summ, args.data_sample_rate, max_outputs=10)
-  G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z[:, :, 0]), axis=1))
+  G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z_summ[:, :, 0]), axis=1))
   x_rms = tf.sqrt(tf.reduce_mean(tf.square(x[:, :, 0]), axis=1))
   tf.summary.histogram('x_rms_batch', x_rms)
   tf.summary.histogram('G_z_rms_batch', G_z_rms)
