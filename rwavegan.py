@@ -1,7 +1,7 @@
 import tensorflow as tf
 import math
 from ops import maxout, lrelu, round_to_nearest_multiple, residual_block, apply_phaseshuffle, z_to_gain_bias, conditional_batchnorm
-from ops import dense_sn, conv1d_sn
+from ops import dense_sn, conv1d_sn, embed_sn
 from functools import partial
 
 """
@@ -165,8 +165,8 @@ def RWaveGANDiscriminator(
     dim=64,
     use_batchnorm=False,
     phaseshuffle_rad=0,
-    labels=None,
-    nlabels=1,
+    y=None,
+    n_labels=1,
     use_maxout=False,
     use_ortho_init=False,
     use_spec_norm=False):
@@ -268,17 +268,19 @@ def RWaveGANDiscriminator(
   output = batchnorm(output)
   output = activation(output)
 
-  # Flatten
-  output = tf.reshape(output, [batch_size, -1])
+  # Global pooling
+  # [16, 1024] -> [1024]
+  with tf.variable_scope('global_pool'):
+    pool = tf.reduce_sum(output, axis=1)
 
   # Connect to single logit
   with tf.variable_scope('output'):
-    if labels is not None:
-      output = which_dense(output, nlabels)
-      indices = tf.range(tf.shape(output)[0])
-      output = tf.gather_nd(output, tf.stack([indices, labels], -1))
-    else:
-      output = which_dense(output, 1)[:, 0]
+      output = which_dense(pool, 1)[:, 0]
+
+      if y is not None:
+        embed_size = pool.shape.as_list()[-1]
+        yembed = embed_sn(y, n_labels, embed_size, kernel_initializer=kernel_initializer)
+        output += tf.reduce_sum(yembed * pool, axis=1)
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 

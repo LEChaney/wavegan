@@ -69,13 +69,12 @@ def train(fps, args):
   else:
     build_generator = WaveGANGenerator
     build_discriminator = WaveGANDiscriminator
-  
+
   # Make generator
   with tf.variable_scope('G'):
     # Create label embedding
     if args.use_conditioning:
-      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
-      yembed = tf.nn.embedding_lookup(embedding_table, y)
+      yembed = ops.embed_sn(y, len(vocab), args.embedding_dim)
 
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=True, **args.wavegan_g_kwargs)
@@ -112,9 +111,9 @@ def train(fps, args):
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
     if args.use_progressive_growing:
-      D_x = PWaveGANDiscriminator(x, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_x = build_discriminator(x, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_x = build_discriminator(x, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -132,9 +131,9 @@ def train(fps, args):
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
     if args.use_progressive_growing:
-      D_G_z = PWaveGANDiscriminator(G_z, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_G_z = build_discriminator(G_z, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z = build_discriminator(G_z, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
@@ -189,9 +188,9 @@ def train(fps, args):
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
       if args.use_progressive_growing:
-        D_interp = PWaveGANDiscriminator(interpolates, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
       else:
-        D_interp = build_discriminator(interpolates, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp = build_discriminator(interpolates, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
     LAMBDA = 10
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -460,15 +459,15 @@ def infer(args):
   else:
     build_generator = WaveGANGenerator
 
-  yembed = None
-  if args.use_conditioning:
-    yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
-
   # Execute generator
   with tf.variable_scope('G'):
+    # Create label embedding
+    vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
+    yembed = None
     if args.use_conditioning:
-      vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
-      embedding_table = tf.Variable(tf.random_normal(shape=(len(vocab), args.embedding_dim)), name='embed_table', trainable=True)
+      yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
+      embedding_table = ops.get_embed_table_sn(len(vocab), args.embedding_dim, table_name='embed_table', kernel_initializer=tf.initializers.orthogonal)
+      embedding_table = tf.identity(embedding_table, name='embed_table')
 
     if args.use_progressive_growing:
       G_z = PWaveGANGenerator(z, lod, yembed=yembed, train=False, **args.wavegan_g_kwargs)
@@ -645,7 +644,7 @@ def incept(args):
   gan_G_z = gan_graph.get_tensor_by_name('G_z:0')[:, :, 0]
   gan_step = gan_graph.get_tensor_by_name('global_step:0')
   gan_embed_table = gan_graph.get_tensor_by_name('G/embed_table:0')
-  gan_yembed = gan_graph.get_tensor_by_name('yembed:0')
+  gan_yembed = gan_graph.get_tensor_by_name('G/yembed:0')
 
   # Load vocab
   if args.use_conditioning:

@@ -80,28 +80,66 @@ def avg_downsample(inputs, stride=4):
     return tf.layers.average_pooling1d(inputs, pool_size=stride, strides=stride, padding='same')
 
 
+def get_embed_table_sn(
+    n_labels, 
+    embedding_size, 
+    table_name='embed_table',
+    kernel_initializer=None,
+    scope=None):
+  with tf.variable_scope('embed_sn'):
+    if kernel_initializer is None:
+      kernel_initializer = tf.initializers.glorot_uniform
+    W = tf.get_variable(table_name + '_unnorm', shape=[n_labels, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
+
+    # Get spectral normalized weight tensor
+    W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
+
+    return tf.identity(W_bar, name=table_name)
+
+
+def embed_sn(
+    y,
+    n_labels,
+    embedding_size,
+    table_name='embed_table',
+    kernel_initializer=None):
+  with tf.variable_scope('embed_sn'):
+    if kernel_initializer is None:
+      kernel_initializer = tf.initializers.glorot_uniform
+    W = tf.get_variable(table_name + '_unnorm', shape=[n_labels, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
+
+    # Get spectral normalized weight tensor
+    W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
+
+    # Perform layer op
+    yembed = tf.nn.embedding_lookup(W_bar, y)
+      
+    return yembed
+
+
 def dense_sn(
     inputs,
     units,
     activation=None,
     use_bias=True,
     kernel_initializer=None):
-  # Init weight tensor
-  if kernel_initializer is None:
-    kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.get_variable('W', shape=[inputs.shape.as_list()[-1], units], initializer=kernel_initializer, dtype=tf.float32)
+  with tf.variable_scope('dense_sn'):
+    # Init weight tensor
+    if kernel_initializer is None:
+      kernel_initializer = tf.initializers.glorot_uniform
+    W = tf.get_variable('W', shape=[inputs.shape.as_list()[-1], units], initializer=kernel_initializer, dtype=tf.float32)
 
-  # Get spectral normalized weight tensor
-  W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
+    # Get spectral normalized weight tensor
+    W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
 
-  # Perform layer op
-  output = tf.matmul(inputs, W_bar)
+    # Perform layer op
+    output = tf.matmul(inputs, W_bar)
 
-  # Add bias
-  if use_bias:
-    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
-    
-  return output
+    # Add bias
+    if use_bias:
+      output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
+      
+    return output
 
 
 def conv1d_sn(
@@ -112,22 +150,23 @@ def conv1d_sn(
     padding='same',
     use_bias=True,
     kernel_initializer=None):
-  # Init weight tensor
-  if kernel_initializer is None:
-    kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.get_variable('W', shape=[kernel_size, inputs.shape.as_list()[-1], filters], initializer=kernel_initializer, dtype=tf.float32)
+  with tf.variable_scope('conv1d_sn'):
+    # Init weight tensor
+    if kernel_initializer is None:
+      kernel_initializer = tf.initializers.glorot_uniform
+    W = tf.get_variable('W', shape=[kernel_size, inputs.shape.as_list()[-1], filters], initializer=kernel_initializer, dtype=tf.float32)
 
-  # Get spectral normalized weight tensor
-  W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
+    # Get spectral normalized weight tensor
+    W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
 
-  # Perform layer op
-  output = tf.nn.conv1d(inputs, W_bar, stride=strides, padding=padding.upper())
+    # Perform layer op
+    output = tf.nn.conv1d(inputs, W_bar, stride=strides, padding=padding.upper())
 
-  # Add bias
-  if use_bias:
-    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
+    # Add bias
+    if use_bias:
+      output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
 
-  return output
+    return output
 
 def conv2d_transpose_sn(
     inputs,
@@ -137,25 +176,26 @@ def conv2d_transpose_sn(
     padding='same',
     use_bias=True,
     kernel_initializer=None):
-  # Init weight tensor
-  if kernel_initializer is None:
-    kernel_initializer = tf.initializers.glorot_uniform
-  W = tf.get_variable('W', shape=list(kernel_size) + [filters, inputs.shape.as_list()[-1]], initializer=kernel_initializer, dtype=tf.float32)
+  with tf.variable_scope('conv2d_t_sn'):
+    # Init weight tensor
+    if kernel_initializer is None:
+      kernel_initializer = tf.initializers.glorot_uniform
+    W = tf.get_variable('W', shape=list(kernel_size) + [filters, inputs.shape.as_list()[-1]], initializer=kernel_initializer, dtype=tf.float32)
 
-  # Get spectral normalized weight tensor
-  W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
+    # Get spectral normalized weight tensor
+    W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
 
-  # Perform layer op
-  input_shape = inputs.shape.as_list()
-  output_shape = tf.stack([tf.shape(inputs)[0], input_shape[1] * strides[0], input_shape[2] * strides[1], filters])
-  strides = [1] + list(strides) + [1]
-  output = tf.nn.conv2d_transpose(inputs, W_bar, output_shape=output_shape, strides=strides, padding=padding.upper())
+    # Perform layer op
+    input_shape = inputs.shape.as_list()
+    output_shape = tf.stack([tf.shape(inputs)[0], input_shape[1] * strides[0], input_shape[2] * strides[1], filters])
+    strides = [1] + list(strides) + [1]
+    output = tf.nn.conv2d_transpose(inputs, W_bar, output_shape=output_shape, strides=strides, padding=padding.upper())
 
-  # Add bias
-  if use_bias:
-    output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
+    # Add bias
+    if use_bias:
+      output += tf.get_variable('b', initializer=tf.zeros_initializer(), shape=[output.shape.as_list()[-1]], dtype=tf.float32)
 
-  return output
+    return output
 
 
 def conv1d_transpose(
