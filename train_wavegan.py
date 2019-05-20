@@ -291,7 +291,7 @@ def train(fps, args):
         beta1=0.0,
         beta2=0.9)
     D_opt = tf.train.AdamOptimizer(
-        learning_rate=4e-4,
+        learning_rate=2e-4,
         beta1=0.0,
         beta2=0.9)
   else:
