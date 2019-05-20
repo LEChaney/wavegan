@@ -168,17 +168,18 @@ def train(fps, args):
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
 
-    with tf.name_scope('D_clip_weights'):
-      clip_ops = []
-      for var in D_vars:
-        clip_bounds = [-.01, .01]
-        clip_ops.append(
-          tf.assign(
-            var,
-            tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+    if not args.use_spec_norm:
+      with tf.name_scope('D_clip_weights'):
+        clip_ops = []
+        for var in D_vars:
+          clip_bounds = [-.01, .01]
+          clip_ops.append(
+            tf.assign(
+              var,
+              tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+            )
           )
-        )
-      D_clip_weights = tf.group(*clip_ops)
+        D_clip_weights = tf.group(*clip_ops)
 
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
@@ -193,7 +194,7 @@ def train(fps, args):
       else:
         D_interp = build_discriminator(interpolates, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
-    LAMBDA = 10
+    LAMBDA = 1
     gradients = tf.gradients(D_interp, [interpolates])[0]
     # gradients = tf.gradients(D_x, [x])[0]
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
@@ -272,10 +273,14 @@ def train(fps, args):
     D_opt = tf.train.RMSPropOptimizer(
         learning_rate=1e-4)
   elif args.wavegan_loss == 'wgan':
-    G_opt = tf.train.RMSPropOptimizer(
-        learning_rate=5e-5)
-    D_opt = tf.train.RMSPropOptimizer(
-        learning_rate=5e-5)
+    G_opt = tf.train.AdamOptimizer(
+        learning_rate=1e-4,
+        beta1=0.0,
+        beta2=0.9)
+    D_opt = tf.train.AdamOptimizer(
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
   elif args.wavegan_loss == 'wgan-gp':
     G_opt = tf.train.AdamOptimizer(
         learning_rate=1e-4,
@@ -337,11 +342,11 @@ def train(fps, args):
 
   # Get spectral norm update ops. Filter by D_x variable scopes to avoid
   # updating the discriminator weights twice via D_G_z update ops.
-  G_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='G')
+  # G_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='G')
   D_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='D_x')
-  print("Generator spectral norm update ops:")
-  for update_ops in G_spec_norm_update_ops:
-    print(update_ops)
+  # print("Generator spectral norm update ops:")
+  # for update_ops in G_spec_norm_update_ops:
+  #   print(update_ops)
   print("Discriminator spectral norm update ops:")
   for update_ops in D_spec_norm_update_ops:
     print(update_ops)
@@ -390,14 +395,15 @@ def train(fps, args):
         sess.run(D_train_op)
 
         # Enforce Lipschitz constraint for WGAN
-        if D_clip_weights is not None:
+        if not args.use_spec_norm and D_clip_weights is not None:
           if args.use_progressive_growing:
             sess.run(D_clip_weights, feed_dict={lod: cur_lod})
           else:
             sess.run(D_clip_weights)
 
         # Update discriminator weights spectral norms
-        sess.run(D_spec_norm_update_ops)
+        if args.use_spec_norm:
+          sess.run(D_spec_norm_update_ops)
 
       # Train generator
       sess.run(G_zero_accum_ops)
@@ -409,7 +415,8 @@ def train(fps, args):
       sess.run(G_train_op)
 
       # Update generator weights spectral norms
-      sess.run(G_spec_norm_update_ops)
+      # if args.use_spec_norm:
+      #     sess.run(G_spec_norm_update_ops)
 
 
 """
