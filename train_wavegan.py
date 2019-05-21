@@ -73,6 +73,8 @@ def train(fps, args):
   # Make generator
   macro_patch_size = args.data_slice_len // args.n_macro_patches
   micro_patch_size = macro_patch_size // args.n_micro_patches
+  print('Macro Patch Size: {}'.format(macro_patch_size))
+  print('Micro Patch Size: {}'.format(micro_patch_size))
   def macro_patch_gen(macro_start_idx, n_sequential_macros=1, reuse=False):
     batch_size = tf.shape(macro_start_idx)[0]
     for macro_patch_i in range(n_sequential_macros):
@@ -111,7 +113,7 @@ def train(fps, args):
             G_z = _G_z
           else:
             G_z = tf.concat([G_z, _G_z], 1)
-      return G_z
+    return G_z
   macro_start_idx = tf.random_uniform([args.train_batch_size, 1], maxval=args.data_slice_len - macro_patch_size + 1, dtype=tf.int32)
   G_z = macro_patch_gen(macro_start_idx)
   G_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='G')
@@ -131,18 +133,6 @@ def train(fps, args):
   macro_start_idx_0 = tf.zeros([10, 1], dtype=tf.int32)
   G_z_summ = macro_patch_gen(macro_start_idx_0, args.n_macro_patches, reuse=True)
 
-  # Summarize
-  tf_vocab = tf.constant(list(vocab.index), name='vocab')
-  tf.summary.text('labels', tf.gather(tf_vocab, y))
-  tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
-  tf.summary.audio('G_z', G_z_summ, args.data_sample_rate, max_outputs=10)
-  G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z_summ[:, :, 0]), axis=1))
-  x_rms = tf.sqrt(tf.reduce_mean(tf.square(x[:, :, 0]), axis=1))
-  tf.summary.histogram('x_rms_batch', x_rms)
-  tf.summary.histogram('G_z_rms_batch', G_z_rms)
-  tf.summary.scalar('x_rms', tf.reduce_mean(x_rms))
-  tf.summary.scalar('G_z_rms', tf.reduce_mean(G_z_rms))
-
   # Select random macro patch from audio clip to train on.
   for i in range(args.train_batch_size):
     x_sample = x[i, macro_start_idx[i, 0] : macro_start_idx[i, 0] + macro_patch_size]
@@ -151,8 +141,24 @@ def train(fps, args):
       x_batch = x_sample
     else:
       x_batch = tf.concat([x_batch, x_sample], 0)
+  x_full = x
   x = x_batch
   x.set_shape([None, macro_patch_size, args.data_num_channels])
+
+  # Summarize
+  tf_vocab = tf.constant(list(vocab.index), name='vocab')
+  tf.summary.text('labels', tf.gather(tf_vocab, y))
+  tf.summary.audio('x', x, args.data_sample_rate, max_outputs=10)
+  tf.summary.audio('x_full', x_full, args.data_sample_rate, max_outputs=10)
+  tf.summary.audio('G_z', G_z, args.data_sample_rate, max_outputs=10)
+  tf.summary.audio('G_z_full', G_z_summ, args.data_sample_rate, max_outputs=10)
+  G_z_rms = tf.sqrt(tf.reduce_mean(tf.square(G_z_summ[:, :, 0]), axis=1))
+  x_rms = tf.sqrt(tf.reduce_mean(tf.square(x_full[:, :, 0]), axis=1))
+  tf.summary.histogram('macro_start_idx', macro_start_idx)
+  tf.summary.histogram('x_rms_batch', x_rms)
+  tf.summary.histogram('G_z_rms_batch', G_z_rms)
+  tf.summary.scalar('x_rms', tf.reduce_mean(x_rms))
+  tf.summary.scalar('G_z_rms', tf.reduce_mean(G_z_rms))
 
   # [-1, 1] range macro coords for spatial consistency loss
   if (args.data_slice_len - macro_patch_size) > 0:
@@ -542,8 +548,12 @@ def infer(args):
         if args.n_macro_patches > 1 or args.n_micro_patches > 1:
           macro_data_idx = macro_patch_i * macro_patch_size
           micro_data_idx = macro_data_idx + micro_patch_i * micro_patch_size
-          micro_coord = micro_data_idx / (args.data_slice_len - micro_patch_size) * 2 - 1
-          micro_coord = tf.fill([tf.shape(_yembed)[0], 1], micro_coord)
+          if (args.data_slice_len - micro_patch_size) > 0:
+            micro_coord = micro_data_idx / (args.data_slice_len - micro_patch_size) * 2 - 1
+            micro_coord = tf.fill([tf.shape(_yembed)[0], 1], micro_coord)
+          else:
+            micro_coord = tf.zeros([tf.shape(_yembed)[0], 1])
+          micro_coord = tf.cast(micro_coord, tf.float32)
           if _yembed is not None:
             yembed = tf.concat([_yembed, micro_coord], -1)
           else:
