@@ -81,20 +81,24 @@ def avg_downsample(inputs, stride=4):
 
 
 def get_embed_table_sn(
-    n_labels, 
-    embedding_size, 
+    y,
+    n_labels,
+    embedding_size,
     table_name='embed_table',
-    kernel_initializer=None,
-    scope=None):
+    extra_lin_in=None,
+    kernel_initializer=None):
   with tf.variable_scope('embed_sn'):
     if kernel_initializer is None:
       kernel_initializer = tf.initializers.glorot_uniform
-    W = tf.get_variable(table_name + '_unnorm', shape=[n_labels, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
+    n_extra_features = extra_lin_in.shape.as_list()[-1] if extra_lin_in is not None else 0
+    f_in = n_labels + n_extra_features
+    W = tf.get_variable(table_name + '_unnorm', shape=[f_in, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
 
     # Get spectral normalized weight tensor
     W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
 
-    return tf.identity(W_bar, name=table_name)
+    embed_table_stop = -n_extra_features if n_extra_features != 0 else None
+    return tf.identity(W_bar[:embed_table_stop], name=table_name)
 
 
 def embed_sn(
@@ -102,17 +106,26 @@ def embed_sn(
     n_labels,
     embedding_size,
     table_name='embed_table',
+    extra_lin_in=None,
     kernel_initializer=None):
   with tf.variable_scope('embed_sn'):
     if kernel_initializer is None:
       kernel_initializer = tf.initializers.glorot_uniform
-    W = tf.get_variable(table_name + '_unnorm', shape=[n_labels, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
+    n_extra_features = extra_lin_in.shape.as_list()[-1] if extra_lin_in is not None else 0
+    f_in = n_labels + n_extra_features
+    W = tf.get_variable(table_name + '_unnorm', shape=[f_in, embedding_size], initializer=kernel_initializer, dtype=tf.float32)
 
     # Get spectral normalized weight tensor
     W_bar = spectral_normed_weight(W, update_collection=SPECTRAL_NORM_UPDATE_OPS)
 
     # Perform layer op
-    yembed = tf.nn.embedding_lookup(W_bar, y)
+    embed_table_stop = -n_extra_features if n_extra_features != 0 else None
+    yembed = tf.nn.embedding_lookup(W_bar[:embed_table_stop], y)
+
+    # Perform combined linear op on extra input features
+    if n_extra_features > 0:
+      with tf.variable_scope('extra_lin'):
+        yembed += tf.matmul(extra_lin_in, W_bar[embed_table_stop:])
       
     return yembed
 

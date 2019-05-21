@@ -17,7 +17,7 @@ python train_wavegan.py train .\train_sc09 ^
 --wavegan_dim 64 ^
 --train_batch_size 64 ^
 --n_minibatches 1 ^
---n_macro_patches 1 ^
+--n_macro_patches 4 ^
 --n_micro_patches 4 ^
 --train_save_secs 600 ^
 --train_summary_secs 15

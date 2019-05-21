@@ -169,6 +169,7 @@ def RWaveGANDiscriminator(
     use_batchnorm=False,
     phaseshuffle_rad=0,
     y=None,
+    macro_coord=None,
     n_labels=1,
     use_maxout=False,
     use_ortho_init=False,
@@ -282,9 +283,7 @@ def RWaveGANDiscriminator(
 
     if y is not None:
       embed_size = pool.shape.as_list()[-1]
-      yembed = embed_sn(y, n_labels, embed_size, kernel_initializer=kernel_initializer)
+      yembed = embed_sn(y, n_labels, embed_size, extra_lin_in=macro_coord, kernel_initializer=kernel_initializer)
       output += tf.reduce_sum(yembed * pool, axis=1)
 
-      output += tf.reduce_sum(yembed * pool, axis=1)
-
-    return output, pool
+    return output

@@ -90,7 +90,7 @@ def train(fps, args):
             if (args.data_slice_len - micro_patch_size) > 0:
               micro_coord = micro_data_idx / (args.data_slice_len - micro_patch_size) * 2 - 1
             else:
-              micro_coord = 0
+              micro_coord = tf.zeros_like(micro_data_idx)
             micro_coord = tf.cast(micro_coord, tf.float32)
             if yembed is not None:
               yembed = tf.concat([yembed, micro_coord], -1)
@@ -156,9 +156,9 @@ def train(fps, args):
 
   # [-1, 1] range macro coords for spatial consistency loss
   if (args.data_slice_len - macro_patch_size) > 0:
-    macro_coord = tf.cast(macro_start_idx / (args.data_slice_len - macro_patch_size) * 2 - 1, tf.float32)[:, 0]
+    macro_coord = tf.cast(macro_start_idx / (args.data_slice_len - macro_patch_size) * 2 - 1, tf.float32)
   else:
-    macro_coord = 0
+    macro_coord = tf.zeros_like(macro_start_idx)
 
   if args.use_spec_norm:
     which_dense = partial(ops.dense_sn, kernel_initializer=tf.initializers.orthogonal)
@@ -168,21 +168,9 @@ def train(fps, args):
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
     if args.use_progressive_growing:
-      D_x, H_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
+      D_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
     else:
-      D_x, H_x = build_discriminator(x, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
-
-    # Create auxilary head for spatial coordinate prediction
-    if args.n_macro_patches > 1:
-      with tf.variable_scope('coord_pred_0'):
-        # TODO: swapable initializer
-        coord_pred = which_dense(H_x, args.wavegan_dim * 2)
-        # TODO: optional batchnorm
-        # TODO: make activation swapable
-      with tf.variable_scope('coord_pred_1'):
-        coord_pred = ops.lrelu(coord_pred)
-        coord_pred = which_dense(coord_pred, 1)
-        coord_pred = tf.nn.tanh(coord_pred)[:, 0]
+      D_x = build_discriminator(x, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -200,17 +188,12 @@ def train(fps, args):
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
     if args.use_progressive_growing:
-      D_G_z, _ = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
     else:
-      D_G_z, _ = build_discriminator(G_z, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z = build_discriminator(G_z, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
-  if args.n_macro_patches > 1:
-    alpha = 100
-    spatial_consistency_loss = alpha * tf.reduce_mean(tf.abs(macro_coord - coord_pred))
-  else:
-    spatial_consistency_loss = 0
   if args.wavegan_loss == 'dcgan':
     fake = tf.zeros([args.train_batch_size], dtype=tf.float32)
     real = tf.ones([args.train_batch_size], dtype=tf.float32)
@@ -219,8 +202,6 @@ def train(fps, args):
       logits=D_G_z,
       labels=real
     ))
-    G_loss += spatial_consistency_loss
-
     D_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
       logits=D_G_z,
       labels=fake
@@ -230,22 +211,16 @@ def train(fps, args):
       labels=real
     ))
     D_loss /= 2.
-    D_loss += spatial_consistency_loss
-
 
   elif args.wavegan_loss == 'lsgan':
     G_loss = tf.reduce_mean((D_G_z - 1.) ** 2)
-    G_loss += spatial_consistency_loss
     D_loss = tf.reduce_mean((D_x - 1.) ** 2)
     D_loss += tf.reduce_mean(D_G_z ** 2)
     D_loss /= 2.
-    D_loss += spatial_consistency_loss
 
   elif args.wavegan_loss == 'wgan':
     G_loss = -tf.reduce_mean(D_G_z)
-    G_loss += spatial_consistency_loss
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    D_loss += spatial_consistency_loss
 
     if not args.use_spec_norm:
       with tf.name_scope('D_clip_weights'):
@@ -262,18 +237,16 @@ def train(fps, args):
 
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
-    G_loss += spatial_consistency_loss
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    D_loss += spatial_consistency_loss
 
     alpha = tf.random_uniform(shape=[args.train_batch_size, 1, 1], minval=0., maxval=1.)
     differences = G_z - x
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
       if args.use_progressive_growing:
-        D_interp, _ = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
       else:
-        D_interp, _ = build_discriminator(interpolates, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp = build_discriminator(interpolates, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
 
     LAMBDA = 1
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -304,15 +277,6 @@ def train(fps, args):
     tf.summary.scalar('Gradient Penalty', gradient_penalty)
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
-  if args.n_macro_patches > 1:
-    macro_mean, macro_var = tf.nn.moments(macro_coord, [0])
-    pred_mean, pred_var = tf.nn.moments(coord_pred, [0])
-    tf.summary.scalar('Macro coordinate mean', macro_mean)
-    tf.summary.scalar('Macro coordinate variance', macro_var)
-    tf.summary.scalar('Predicted coordinate mean', pred_mean)
-    tf.summary.scalar('Predicted coordinate var', pred_var)
-    tf.summary.scalar('Spatial_consistency_loss', spatial_consistency_loss / 100)
-
 
   # learning_rate = tf.train.exponential_decay(
   #   1e-5,
