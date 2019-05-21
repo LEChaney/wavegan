@@ -4,7 +4,7 @@ try:
   import cPickle as pickle
 except:
   import pickle
-from functools import reduce
+from functools import reduce, partial
 import os
 import time
 
@@ -73,7 +73,8 @@ def train(fps, args):
   # Make generator
   macro_patch_size = args.data_slice_len // args.n_macro_patches
   micro_patch_size = macro_patch_size // args.n_micro_patches
-  def macro_patch_gen(macro_start_idx, n_sequential_macros=1, batch_size=args.train_batch_size, reuse=False):
+  def macro_patch_gen(macro_start_idx, n_sequential_macros=1, reuse=False):
+    batch_size = tf.shape(macro_start_idx)[0]
     for macro_patch_i in range(n_sequential_macros):
       for micro_patch_i in range(args.n_micro_patches):
         with tf.variable_scope('G', reuse=reuse or macro_patch_i != 0 or micro_patch_i != 0):
@@ -86,7 +87,10 @@ def train(fps, args):
           if args.n_macro_patches > 1 or args.n_micro_patches > 1:
             macro_data_idx = macro_start_idx + macro_patch_i * macro_patch_size
             micro_data_idx = macro_data_idx + micro_patch_i * micro_patch_size
-            micro_coord = micro_data_idx / (args.data_slice_len - micro_patch_size) * 2 - 1
+            if (args.data_slice_len - micro_patch_size) > 0:
+              micro_coord = micro_data_idx / (args.data_slice_len - micro_patch_size) * 2 - 1
+            else:
+              micro_coord = 0
             micro_coord = tf.cast(micro_coord, tf.float32)
             if yembed is not None:
               yembed = tf.concat([yembed, micro_coord], -1)
@@ -125,7 +129,7 @@ def train(fps, args):
 
   # Generate full audio clip for summary
   macro_start_idx_0 = tf.zeros([10, 1], dtype=tf.int32)
-  G_z_summ = macro_patch_gen(macro_start_idx_0, args.n_macro_patches, batch_size=10, reuse=True)
+  G_z_summ = macro_patch_gen(macro_start_idx_0, args.n_macro_patches, reuse=True)
 
   # Summarize
   tf_vocab = tf.constant(list(vocab.index), name='vocab')
@@ -151,24 +155,34 @@ def train(fps, args):
   x.set_shape([None, macro_patch_size, args.data_num_channels])
 
   # [-1, 1] range macro coords for spatial consistency loss
-  macro_coord = tf.cast(macro_start_idx / (args.data_slice_len - macro_patch_size) * 2 - 1, tf.float32)[:, 0]
+  if (args.data_slice_len - macro_patch_size) > 0:
+    macro_coord = tf.cast(macro_start_idx / (args.data_slice_len - macro_patch_size) * 2 - 1, tf.float32)[:, 0]
+  else:
+    macro_coord = 0
+
+  if args.use_spec_norm:
+    which_dense = partial(ops.dense_sn, kernel_initializer=tf.initializers.orthogonal)
+  else:
+    which_dense = partial(tf.layers.dense, kernel_initializer=tf.initializers.orthogonal)
 
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
     if args.use_progressive_growing:
-      D_x, H_x = PWaveGANDiscriminator(x, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_x, H_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_x, H_x = build_discriminator(x, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_x, H_x = build_discriminator(x, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
     # Create auxilary head for spatial coordinate prediction
-    with tf.variable_scope('coord_pred'):
-      # TODO: swapable initializer
-      coord_pred = tf.layers.dense(H_x, args.wavegan_dim * 2, kernel_initializer=tf.initializers.orthogonal)
-      # TODO: optional batchnorm
-      # TODO: make activation swapable
-      coord_pred = ops.lrelu(coord_pred)
-      coord_pred = tf.layers.dense(coord_pred, 1, kernel_initializer=tf.initializers.orthogonal)
-      coord_pred = tf.nn.tanh(coord_pred)[:, 0]
+    if args.n_macro_patches > 1:
+      with tf.variable_scope('coord_pred_0'):
+        # TODO: swapable initializer
+        coord_pred = which_dense(H_x, args.wavegan_dim * 2)
+        # TODO: optional batchnorm
+        # TODO: make activation swapable
+      with tf.variable_scope('coord_pred_1'):
+        coord_pred = ops.lrelu(coord_pred)
+        coord_pred = which_dense(coord_pred, 1)
+        coord_pred = tf.nn.tanh(coord_pred)[:, 0]
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -186,14 +200,17 @@ def train(fps, args):
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
     if args.use_progressive_growing:
-      D_G_z, _ = PWaveGANDiscriminator(G_z, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z, _ = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
     else:
-      D_G_z, _ = build_discriminator(G_z, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+      D_G_z, _ = build_discriminator(G_z, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
   # Create loss
   D_clip_weights = None
-  alpha = 1
-  spatial_consistency_loss = alpha * tf.reduce_mean(tf.abs(macro_coord - coord_pred))
+  if args.n_macro_patches > 1:
+    alpha = 100
+    spatial_consistency_loss = alpha * tf.reduce_mean(tf.abs(macro_coord - coord_pred))
+  else:
+    spatial_consistency_loss = 0
   if args.wavegan_loss == 'dcgan':
     fake = tf.zeros([args.train_batch_size], dtype=tf.float32)
     real = tf.ones([args.train_batch_size], dtype=tf.float32)
@@ -215,6 +232,7 @@ def train(fps, args):
     D_loss /= 2.
     D_loss += spatial_consistency_loss
 
+
   elif args.wavegan_loss == 'lsgan':
     G_loss = tf.reduce_mean((D_G_z - 1.) ** 2)
     G_loss += spatial_consistency_loss
@@ -222,23 +240,26 @@ def train(fps, args):
     D_loss += tf.reduce_mean(D_G_z ** 2)
     D_loss /= 2.
     D_loss += spatial_consistency_loss
+
   elif args.wavegan_loss == 'wgan':
     G_loss = -tf.reduce_mean(D_G_z)
     G_loss += spatial_consistency_loss
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
     D_loss += spatial_consistency_loss
 
-    with tf.name_scope('D_clip_weights'):
-      clip_ops = []
-      for var in D_vars:
-        clip_bounds = [-.01, .01]
-        clip_ops.append(
-          tf.assign(
-            var,
-            tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+    if not args.use_spec_norm:
+      with tf.name_scope('D_clip_weights'):
+        clip_ops = []
+        for var in D_vars:
+          clip_bounds = [-.01, .01]
+          clip_ops.append(
+            tf.assign(
+              var,
+              tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
+            )
           )
-        )
-      D_clip_weights = tf.group(*clip_ops)
+        D_clip_weights = tf.group(*clip_ops)
+
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
     G_loss += spatial_consistency_loss
@@ -250,16 +271,22 @@ def train(fps, args):
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
       if args.use_progressive_growing:
-        D_interp, _ = PWaveGANDiscriminator(interpolates, lod, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp, _ = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
       else:
-        D_interp, _ = build_discriminator(interpolates, labels=y, nlabels=len(vocab), **args.wavegan_d_kwargs)
+        D_interp, _ = build_discriminator(interpolates, y=y, n_labels=len(vocab), **args.wavegan_d_kwargs)
 
-    LAMBDA = 10
+    LAMBDA = 1
     gradients = tf.gradients(D_interp, [interpolates])[0]
     # gradients = tf.gradients(D_x, [x])[0]
     slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1, 2]))
     gradient_penalty = tf.reduce_mean((slopes) ** 2.)
     D_loss += LAMBDA * gradient_penalty
+  
+  elif args.wavegan_loss == 'hinge':
+    G_loss = -tf.reduce_mean(D_G_z)
+    D_loss =  tf.reduce_mean(tf.maximum(0., 1. - D_x))
+    D_loss += tf.reduce_mean(tf.maximum(0., 1. + D_G_z))
+
   else:
     raise NotImplementedError()
  
@@ -277,13 +304,14 @@ def train(fps, args):
     tf.summary.scalar('Gradient Penalty', gradient_penalty)
   tf.summary.scalar('G_loss', G_loss)
   tf.summary.scalar('D_loss', D_loss)
-  macro_mean, macro_var = tf.nn.moments(macro_coord, [0])
-  pred_mean, pred_var = tf.nn.moments(coord_pred, [0])
-  tf.summary.scalar('Macro coordinate mean', macro_mean)
-  tf.summary.scalar('Macro coordinate variance', macro_var)
-  tf.summary.scalar('Predicted coordinate mean', pred_mean)
-  tf.summary.scalar('Predicted coordinate var', pred_var)
-  tf.summary.scalar('Spatial_consistency_loss', spatial_consistency_loss / 100)
+  if args.n_macro_patches > 1:
+    macro_mean, macro_var = tf.nn.moments(macro_coord, [0])
+    pred_mean, pred_var = tf.nn.moments(coord_pred, [0])
+    tf.summary.scalar('Macro coordinate mean', macro_mean)
+    tf.summary.scalar('Macro coordinate variance', macro_var)
+    tf.summary.scalar('Predicted coordinate mean', pred_mean)
+    tf.summary.scalar('Predicted coordinate var', pred_var)
+    tf.summary.scalar('Spatial_consistency_loss', spatial_consistency_loss / 100)
 
 
   # learning_rate = tf.train.exponential_decay(
@@ -334,11 +362,24 @@ def train(fps, args):
     D_opt = tf.train.RMSPropOptimizer(
         learning_rate=1e-4)
   elif args.wavegan_loss == 'wgan':
-    G_opt = tf.train.RMSPropOptimizer(
-        learning_rate=5e-5)
-    D_opt = tf.train.RMSPropOptimizer(
-        learning_rate=5e-5)
+    G_opt = tf.train.AdamOptimizer(
+        learning_rate=1e-4,
+        beta1=0.0,
+        beta2=0.9)
+    D_opt = tf.train.AdamOptimizer(
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
   elif args.wavegan_loss == 'wgan-gp':
+    G_opt = tf.train.AdamOptimizer(
+        learning_rate=1e-4,
+        beta1=0.0,
+        beta2=0.9)
+    D_opt = tf.train.AdamOptimizer(
+        learning_rate=2e-4,
+        beta1=0.0,
+        beta2=0.9)
+  elif args.wavegan_loss == 'hinge':
     G_opt = tf.train.AdamOptimizer(
         learning_rate=1e-4,
         beta1=0.0,
@@ -388,6 +429,17 @@ def train(fps, args):
   config = tf.ConfigProto()
   config.gpu_options.allow_growth = True
 
+  # Get spectral norm update ops. Filter by D_x variable scopes to avoid
+  # updating the discriminator weights twice via D_G_z update ops.
+  # G_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='G')
+  D_spec_norm_update_ops = tf.get_collection(ops.SPECTRAL_NORM_UPDATE_OPS, scope='D_x')
+  # print("Generator spectral norm update ops:")
+  # for update_ops in G_spec_norm_update_ops:
+  #   print(update_ops)
+  print("Discriminator spectral norm update ops:")
+  for update_ops in D_spec_norm_update_ops:
+    print(update_ops)
+
   # Run training
   with tf.train.MonitoredTrainingSession(
       checkpoint_dir=args.train_dir,
@@ -432,11 +484,15 @@ def train(fps, args):
         sess.run(D_train_op)
 
         # Enforce Lipschitz constraint for WGAN
-        if D_clip_weights is not None:
+        if not args.use_spec_norm and D_clip_weights is not None:
           if args.use_progressive_growing:
             sess.run(D_clip_weights, feed_dict={lod: cur_lod})
           else:
             sess.run(D_clip_weights)
+
+        # Update discriminator weights spectral norms
+        if args.use_spec_norm:
+          sess.run(D_spec_norm_update_ops)
 
       # Train generator
       sess.run(G_zero_accum_ops)
@@ -446,6 +502,10 @@ def train(fps, args):
         else:
           sess.run(G_grad_accum_ops)
       sess.run(G_train_op)
+
+      # Update generator weights spectral norms
+      # if args.use_spec_norm:
+      #     sess.run(G_spec_norm_update_ops)
 
 
 """
@@ -501,14 +561,15 @@ def infer(args):
   _yembed = None
   if args.use_conditioning:
     _yembed = tf.placeholder(tf.float32, [None, args.embedding_dim], name='yembed')
-    vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
   
   # Execute generator
+  vocab, _ = loader.create_or_load_vocab_and_label_ids(args.data_dir, args.train_dir)
   macro_patch_size = args.data_slice_len // args.n_macro_patches
   micro_patch_size = macro_patch_size // args.n_micro_patches
   for macro_patch_i in range(args.n_macro_patches):
     for micro_patch_i in range(args.n_micro_patches):
       with tf.variable_scope('G', reuse=macro_patch_i != 0 or micro_patch_i != 0):
+
         # Create label embedding
         if args.use_conditioning:
           embedding_table = tf.get_variable('embed_table', shape=[len(vocab), args.embedding_dim], initializer=tf.initializers.orthogonal, trainable=True)
@@ -558,6 +619,15 @@ def infer(args):
 
   # Create saver
   G_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='G')
+  print('-' * 80)
+  print('Inference vars:')
+  nparams = 0
+  for v in G_vars:
+    v_shape = v.get_shape().as_list()
+    v_n = reduce(lambda x, y: x * y, v_shape)
+    nparams += v_n
+    print('{} ({}): {}'.format(v.get_shape().as_list(), v_n, v.name))
+  print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
   global_step = tf.train.get_or_create_global_step()
   saver = tf.train.Saver(G_vars + [global_step])
 
@@ -863,7 +933,7 @@ if __name__ == '__main__':
       help='Enable batchnorm')
   wavegan_args.add_argument('--wavegan_disc_nupdates', type=int,
       help='Number of discriminator updates per generator update')
-  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp'],
+  wavegan_args.add_argument('--wavegan_loss', type=str, choices=['dcgan', 'lsgan', 'wgan', 'wgan-gp', 'hinge'],
       help='Which GAN loss to use')
   wavegan_args.add_argument('--wavegan_genr_upsample', type=str, choices=['zeros', 'nn'],
       help='Generator upsample strategy')
@@ -896,6 +966,8 @@ if __name__ == '__main__':
       help='Number of macro patches to use for generating each audio clip')
   wavegan_args.add_argument('--n_micro_patches', type=int,
       help='Number of micro patches to use to generate each macro patch')
+  wavegan_args.add_argument('--use_spec_norm', action='store_true', dest='use_spec_norm',
+      help='Apply spectral normalization to every weight tensor in or to preserve lipchitz 1 constraint')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -958,7 +1030,8 @@ if __name__ == '__main__':
     use_ortho_init=False,
     use_skip_z=False,
     n_macro_patches=4,
-    n_micro_patches=4)
+    n_micro_patches=4,
+    use_spec_norm=False)
 
   args = parser.parse_args()
 
@@ -982,7 +1055,8 @@ if __name__ == '__main__':
     'use_ortho_init': args.use_ortho_init,
     'use_skip_z': args.use_skip_z,
     'n_macro_patches': args.n_macro_patches,
-    'n_micro_patches': args.n_micro_patches
+    'n_micro_patches': args.n_micro_patches,
+    'use_spec_norm': args.use_spec_norm
   })
   setattr(args, 'wavegan_d_kwargs', {
     'kernel_len': args.wavegan_kernel_len,
@@ -990,7 +1064,8 @@ if __name__ == '__main__':
     'use_batchnorm': args.wavegan_batchnorm,
     'phaseshuffle_rad': args.wavegan_disc_phaseshuffle,
     'use_maxout': args.use_maxout,
-    'use_ortho_init': args.use_ortho_init
+    'use_ortho_init': args.use_ortho_init,
+    'use_spec_norm': args.use_spec_norm
   })
 
   if args.mode == 'train':

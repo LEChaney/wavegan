@@ -1,6 +1,8 @@
 import tensorflow as tf
 import math
 from ops import maxout, lrelu, round_to_nearest_multiple, bottleneck_block, apply_phaseshuffle, conditional_batchnorm, z_to_gain_bias
+from ops import dense_sn, conv1d_sn, embed_sn
+from functools import partial
 
 """
   Input: [None, 100]
@@ -18,10 +20,12 @@ def DRWaveGANGenerator(
     yembed=None,
     use_maxout=False,
     use_ortho_init=True,
-    use_skip_z=False):
+    use_skip_z=False,
+    use_spec_norm=False):
   assert slice_len in [16384, 32768, 65536]
   batch_size = tf.shape(z)[0]
   size = slice_len // 1024
+  use_spec_norm = False
 
   # Select initialization method
   if use_ortho_init:
@@ -43,26 +47,32 @@ def DRWaveGANGenerator(
 
   if use_batchnorm:
     if use_skip_z:
-      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer)
+      normalization = lambda x: conditional_batchnorm(x, z, training=train, kernel_initializer=kernel_initializer, use_sn=use_spec_norm)
     else:
       normalization = lambda x: tf.layers.batch_normalization(x, training=train)
   else:
     if use_skip_z:
       def condition(x):
-        gain, bias = z_to_gain_bias(z, x.shape[-1], kernel_initializer=kernel_initializer)
+        gain, bias = z_to_gain_bias(z, x.shape.as_list()[-1], kernel_initializer=kernel_initializer, use_sn=use_spec_norm)
         return x * gain + bias
       normalization = condition
     else:
       normalization = lambda x: x
 
-  wscale = 1
+  if use_spec_norm:
+    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
+    which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
+  else:
+    which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
+    which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
+
   def res_block(inputs, filters):
     return bottleneck_block(inputs, filters, kernel_len,
                             stride=1,
                             normalization=normalization,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
   
   def up_res_block(inputs, filters, stride=4):
     return bottleneck_block(inputs, filters, kernel_len,
@@ -70,14 +80,14 @@ def DRWaveGANGenerator(
                             upsample=upsample,
                             normalization=normalization,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
 
   # FC and reshape for convolution
   # [100] -> [16, 1024]
   output = z
   with tf.variable_scope('z_project'):
-    output = tf.layers.dense(output, dim * 16 * size, kernel_initializer=kernel_initializer)
+    output = which_dense(output, dim * 16 * size)
     output = tf.reshape(output, [batch_size, size, dim * 16])
 
   # Layer 0
@@ -115,7 +125,7 @@ def DRWaveGANGenerator(
   with tf.variable_scope('to_audio'):
     output = normalization(output)
     output = tf.nn.relu(output)
-    output = tf.layers.conv1d(output, nch, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
+    output = which_conv(output, nch, kernel_len, strides=1, padding='same')
     output = tf.nn.tanh(output)
 
   # Automatically update batchnorm moving averages every time G is used during training
@@ -141,10 +151,11 @@ def DRWaveGANDiscriminator(
     dim=64,
     use_batchnorm=False,
     phaseshuffle_rad=0,
-    labels=None,
-    nlabels=1,
+    y=None,
+    n_labels=1,
     use_maxout=False,
-    use_ortho_init=True):
+    use_ortho_init=True,
+    use_spec_norm=False):
   batch_size = tf.shape(x)[0]
 
   # Select initialization method
@@ -159,10 +170,10 @@ def DRWaveGANDiscriminator(
     # This should bring the model back to the same total number of parameters.
     dim = round_to_nearest_multiple(dim * math.sqrt(2), 2)
   else:
-    activation = lrelu
+    activation = tf.nn.relu
 
   if use_batchnorm:
-    batchnorm = lambda x: tf.layers.batch_normalization(x, training=True)
+    batchnorm = lambda x: x #tf.layers.batch_normalization(x, training=True)
   else:
     batchnorm = lambda x: x
 
@@ -171,15 +182,21 @@ def DRWaveGANDiscriminator(
   else:
     phaseshuffle = lambda x: x
 
-  wscale = 1
+  if use_spec_norm:
+    which_dense = partial(dense_sn, kernel_initializer=kernel_initializer)
+    which_conv  = partial(conv1d_sn, kernel_initializer=kernel_initializer)
+  else:
+    which_dense = partial(tf.layers.dense, kernel_initializer=kernel_initializer)
+    which_conv  = partial(tf.layers.conv1d, kernel_initializer=kernel_initializer)
+
   def res_block(inputs, filters):
     return bottleneck_block(inputs, filters, kernel_len,
                             stride=1,
                             normalization=batchnorm,
                             phaseshuffle=phaseshuffle,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
 
   def res_block_no_ph(inputs, filters):
     return bottleneck_block(inputs, filters, kernel_len,
@@ -187,8 +204,8 @@ def DRWaveGANDiscriminator(
                             normalization=batchnorm,
                             phaseshuffle=lambda x: x,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
   
   def down_res_block(inputs, filters, stride=4):
     return bottleneck_block(inputs, filters, kernel_len,
@@ -196,8 +213,8 @@ def DRWaveGANDiscriminator(
                             normalization=batchnorm,
                             phaseshuffle=phaseshuffle,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
 
   def down_res_block_no_ph(inputs, filters, stride=4):
     return bottleneck_block(inputs, filters, kernel_len,
@@ -205,14 +222,14 @@ def DRWaveGANDiscriminator(
                             normalization=batchnorm,
                             phaseshuffle=lambda x: x,
                             activation=activation,
-                            wscale=wscale,
-                            kernel_initializer=kernel_initializer)
+                            kernel_initializer=kernel_initializer,
+                            use_sn=use_spec_norm)
 
   # From audio layer
   # [16384, nch] -> [16384, 64]
   output = x
   with tf.variable_scope('from_audio'):
-    output = tf.layers.conv1d(output, dim, kernel_len, strides=1, padding='same', kernel_initializer=kernel_initializer)
+    output = which_conv(output, dim, kernel_len, strides=1, padding='same')
 
   # Layer 0
   # [16384, 64] -> [4096, 128]
@@ -248,17 +265,19 @@ def DRWaveGANDiscriminator(
   output = batchnorm(output)
   output = activation(output)
 
-  # Flatten
-  output = tf.reshape(output, [batch_size, -1])
+  # Global pooling
+  # [16, 1024] -> [1024]
+  with tf.variable_scope('global_pool'):
+    pool = tf.reduce_sum(output, axis=1)
 
   # Connect to single logit
   with tf.variable_scope('output'):
-    if labels is not None:
-      output = tf.layers.dense(output, nlabels, kernel_initializer=kernel_initializer)
-      indices = tf.range(tf.shape(output)[0])
-      output = tf.gather_nd(output, tf.stack([indices, labels], -1))
-    else:
-      output = tf.layers.dense(output, 1, kernel_initializer=kernel_initializer)[:, 0]
+    output = which_dense(pool, 1)[:, 0]
+
+    if y is not None:
+      embed_size = pool.shape.as_list()[-1]
+      yembed = embed_sn(y, n_labels, embed_size, kernel_initializer=kernel_initializer)
+      output += tf.reduce_sum(yembed * pool, axis=1)
 
   # Don't need to aggregate batchnorm update ops like we do for the generator because we only use the discriminator for training
 
