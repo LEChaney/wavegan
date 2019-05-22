@@ -285,18 +285,5 @@ def RWaveGANDiscriminator(
       embed_size = pool.shape.as_list()[-1]
       yembed = embed_sn(y, n_labels, embed_size, extra_lin_in=macro_coord, kernel_initializer=kernel_initializer)
       output += tf.reduce_sum(yembed * pool, axis=1)
-    
-    if macro_coord is not None:
-      with tf.variable_scope('coord_pred_0'):
-        # TODO: swapable initializer
-        coord_pred = which_dense(pool, dim * 2)
-        # TODO: optional batchnorm
-        # TODO: make activation swapable
-      with tf.variable_scope('coord_pred_1'):
-        coord_pred = activation(coord_pred)
-        coord_pred = which_dense(coord_pred, 1)
-        coord_pred = tf.nn.tanh(coord_pred)
-        coord_error = tf.abs(macro_coord - coord_pred)[:, 0]
-      return output, coord_error
-    else:
-      return output, tf.zeros_like(output)
+
+    return output

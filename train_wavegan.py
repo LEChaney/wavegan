@@ -174,9 +174,9 @@ def train(fps, args):
   # Make real discriminator
   with tf.name_scope('D_x'), tf.variable_scope('D'):
     if args.use_progressive_growing:
-      D_x, coord_error_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+      D_x = PWaveGANDiscriminator(x, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
     else:
-      D_x, coord_error_x = build_discriminator(x, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+      D_x = build_discriminator(x, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
   D_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='D')
 
   # Print D summary
@@ -194,12 +194,11 @@ def train(fps, args):
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
     if args.use_progressive_growing:
-      D_G_z, coord_error_g_z = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+      D_G_z = PWaveGANDiscriminator(G_z, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
     else:
-      D_G_z, coord_error_g_z = build_discriminator(G_z, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+      D_G_z = build_discriminator(G_z, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
 
   # Create loss
-  ALPHA = 100
   D_clip_weights = None
   if args.wavegan_loss == 'dcgan':
     fake = tf.zeros([args.train_batch_size], dtype=tf.float32)
@@ -209,7 +208,6 @@ def train(fps, args):
       logits=D_G_z,
       labels=real
     ))
-    G_loss += ALPHA * tf.reduce_mean(coord_error_g_z)
     D_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
       logits=D_G_z,
       labels=fake
@@ -219,21 +217,16 @@ def train(fps, args):
       labels=real
     ))
     D_loss /= 2.
-    D_loss += ALPHA * tf.reduce_mean(coord_error_x)
 
   elif args.wavegan_loss == 'lsgan':
     G_loss = tf.reduce_mean((D_G_z - 1.) ** 2)
-    G_loss += ALPHA * tf.reduce_mean(coord_error_g_z)
     D_loss = tf.reduce_mean((D_x - 1.) ** 2)
     D_loss += tf.reduce_mean(D_G_z ** 2)
     D_loss /= 2.
-    D_loss += ALPHA * tf.reduce_mean(coord_error_x)
 
   elif args.wavegan_loss == 'wgan':
     G_loss = -tf.reduce_mean(D_G_z)
-    G_loss += ALPHA * tf.reduce_mean(coord_error_g_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    D_loss += ALPHA * tf.reduce_mean(coord_error_x)
 
     if not args.use_spec_norm:
       with tf.name_scope('D_clip_weights'):
@@ -250,18 +243,16 @@ def train(fps, args):
 
   elif args.wavegan_loss == 'wgan-gp':
     G_loss = -tf.reduce_mean(D_G_z)
-    G_loss += ALPHA * tf.reduce_mean(coord_error_g_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    D_loss += ALPHA * tf.reduce_mean(coord_error_x)
 
     alpha = tf.random_uniform(shape=[args.train_batch_size, 1, 1], minval=0., maxval=1.)
     differences = G_z - x
     interpolates = x + (alpha * differences)
     with tf.name_scope('D_interp'), tf.variable_scope('D', reuse=True):
       if args.use_progressive_growing:
-        D_interp, _ = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+        D_interp = PWaveGANDiscriminator(interpolates, lod, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
       else:
-        D_interp, _ = build_discriminator(interpolates, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
+        D_interp = build_discriminator(interpolates, y=y, n_labels=len(vocab), macro_coord=macro_coord, **args.wavegan_d_kwargs)
 
     LAMBDA = 1
     gradients = tf.gradients(D_interp, [interpolates])[0]
@@ -272,10 +263,8 @@ def train(fps, args):
   
   elif args.wavegan_loss == 'hinge':
     G_loss = -tf.reduce_mean(D_G_z)
-    G_loss += ALPHA * tf.reduce_mean(coord_error_g_z)
     D_loss =  tf.reduce_mean(tf.maximum(0., 1. - D_x))
     D_loss += tf.reduce_mean(tf.maximum(0., 1. + D_G_z))
-    D_loss += ALPHA * tf.reduce_mean(coord_error_x)
 
   else:
     raise NotImplementedError()
