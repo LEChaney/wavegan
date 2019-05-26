@@ -45,7 +45,8 @@ def train(fps, args):
         prefetch_size=1,
         prefetch_gpu_num=args.data_prefetch_gpu_num,
         extract_labels=args.use_conditioning,
-        vocab_dir=args.train_dir)
+        vocab_dir=args.train_dir,
+        autobalance_classes=args.autobalance_classes)
     if args.use_conditioning:
       x, y, vocab = x
     else:
@@ -164,7 +165,7 @@ def train(fps, args):
   if (args.data_slice_len - macro_patch_size) > 0:
     macro_coord = tf.cast(macro_start_idx / (args.data_slice_len - macro_patch_size) * 2 - 1, tf.float32)
   else:
-    macro_coord = tf.zeros_like(macro_start_idx)
+    macro_coord = None
 
   if args.use_spec_norm:
     which_dense = partial(ops.dense_sn, kernel_initializer=tf.initializers.orthogonal)
@@ -950,6 +951,8 @@ if __name__ == '__main__':
       help='How often to save model')
   train_args.add_argument('--train_summary_secs', type=int,
       help='How often to report summaries')
+  train_args.add_argument('--train_autobalance_classes', action='store_true', dest='autobalance_classes',
+      help='Automatically balance training data class distribution when training')
 
   preview_args = parser.add_argument_group('Preview')
   preview_args.add_argument('--preview_n', type=int,
@@ -1003,9 +1006,10 @@ if __name__ == '__main__':
     n_minibatches=1,
     use_ortho_init=False,
     use_skip_z=False,
-    n_macro_patches=4,
-    n_micro_patches=4,
-    use_spec_norm=False)
+    n_macro_patches=1,
+    n_micro_patches=1,
+    use_spec_norm=False,
+    autobalance_classes=False)
 
   args = parser.parse_args()
 

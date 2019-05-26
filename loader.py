@@ -68,6 +68,13 @@ def decode_audio(fp, fs=None, num_channels=1, normalize=False, fast_wav=False):
   return _wav
 
 
+def get_label_id(x, label_id):
+  '''
+  Gets the label id (int32) from a dataset
+  '''
+  return label_id
+
+
 def create_or_load_vocab_and_label_ids(fps, vocab_dir):
   '''
   Args
@@ -118,7 +125,8 @@ def decode_extract_and_batch(
     prefetch_size=None,
     prefetch_gpu_num=None,
     extract_labels=False,
-    vocab_dir='train'):
+    vocab_dir='train',
+    autobalance_classes=False):
   """Decodes audio file paths into mini-batches of samples.
 
   Args:
@@ -169,6 +177,12 @@ def decode_extract_and_batch(
   # Repeat
   if repeat:
     dataset = dataset.repeat()
+
+  # Resample dataset to balance classes
+  if extract_labels and autobalance_classes:
+      target_dist = tf.fill([len(vocab)], 1 / len(vocab))
+      dataset = dataset.apply(tf.data.experimental.rejection_resample(get_label_id, target_dist))
+      dataset = dataset.map(lambda _, _dataset: _dataset) # Remove extra set of added labels from resampler
 
   def _decode_audio_shaped(fp, *argv):
     _decode_audio_closure = lambda _fp: decode_audio(
