@@ -18,7 +18,7 @@ python train_wavegan.py train .\train_gamemaster ^
 --wavegan_kernel_len 25 ^
 --wavegan_dim 64 ^
 --train_batch_size 64 ^
---n_minibatches 1 ^
+--n_minibatches 2 ^
 --train_save_secs 600 ^
 --train_summary_secs 15
 
