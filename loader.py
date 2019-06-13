@@ -172,7 +172,9 @@ def decode_extract_and_batch(
 
   # Shuffle all filepaths every epoch
   if shuffle:
-    dataset = dataset.shuffle(buffer_size=len(fps))
+    # We need to provide a seed to shuffle for rejection resampling to work for some reason
+    # https://stackoverflow.com/questions/47178317/using-rejection-resample-with-the-dataset-api
+    dataset = dataset.shuffle(buffer_size=len(fps), seed=21)
 
   # Repeat
   if repeat:
