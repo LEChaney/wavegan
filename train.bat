@@ -1,16 +1,23 @@
 python train_wavegan.py train .\train_swordfighter ^
 --data_dir .\data\Sword_Fighter_16bit ^
 --use_resnet ^
---use_maxout ^
+--use_ortho_init ^
+--use_conditioning ^
+--use_skip_z ^
+--use_spec_norm ^
 --data_first_slice ^
 --data_fast_wav ^
 --data_num_channels 2 ^
---wavegan_kernel_len 24 ^
+--train_autobalance_classes ^
+--wavegan_genr_upsample zeros ^
+--wavegan_loss wgan-gp ^
+--wavegan_disc_nupdates 1 ^
+--wavegan_disc_phaseshuffle 1 ^
+--wavegan_latent_dim 100 ^
+--embedding_dim 100 ^
+--wavegan_kernel_len 25 ^
+--wavegan_dim 64 ^
+--train_batch_size 64 ^
+--n_minibatches 2 ^
 --train_save_secs 600 ^
 --train_summary_secs 15
-
-REM --wavegan_disc_nupdates 1 ^
-REM --wavegan_disc_phaseshuffle 0 ^
-REM --use_progressive_growing ^
-REM --train_batch_size 32 ^
-REM --wavegan_dim 52 ^
